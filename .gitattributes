@@ -1,0 +1,25 @@
+# Line ending normalization
+* text=auto eol=lf
+
+# Windows-specific files keep CRLF
+*.ps1     text eol=crlf
+*.psm1    text eol=crlf
+*.psd1    text eol=crlf
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
+# Binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.pdf     binary
+*.zip     binary
+*.tar.gz  binary
+*.rdb     binary
+*.dump    binary
+
+# Linguist
+*.yaml    linguist-detectable=true
+*.yml     linguist-detectable=true

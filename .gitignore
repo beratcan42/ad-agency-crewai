@@ -1,0 +1,87 @@
+# =============================================================
+# CrewAI Multi-Agent Reklam Ajansı - .gitignore
+# =============================================================
+
+# --- Secrets & Env -----------------------------------------------
+.env
+.env.local
+.env.*.local
+*.env.secrets
+secrets/
+*.key
+*.pem
+*.crt
+
+# --- Docker volumes ----------------------------------------------
+data/
+!data/.gitkeep
+
+# --- Logs --------------------------------------------------------
+logs/
+*.log
+
+# --- Vault (Drive senkron klasoru, asla git'e girmez) ------------
+vaults/
+*.vault/
+
+# --- Python ------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node --------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- IDE ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# --- OS ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Backup ------------------------------------------------------
+backup/
+*.bak
+*.dump
+*.sql
+*.rdb
+# Init SQL'leri repo'da tut
+!scripts/sql/**/*.sql
+
+# --- Output / Generated ------------------------------------------
+outputs/
+generated/
+tmp/
+
+# --- Test --------------------------------------------------------
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+
+# --- Local user PowerShell scratch -------------------------------
+scratch.ps1
+*.local.ps1
