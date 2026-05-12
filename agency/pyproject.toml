@@ -38,6 +38,9 @@ dependencies = [
   # --- Observability ----------------------------------------
   "langfuse==4.6.1",
   # OpenTelemetry api/sdk crewai (~=1.34) tarafindan getiriliyor.
+
+  # --- Helpers / CRM -----------------------------------------
+  "reportlab==4.3.0",
   # Instrumentation paketleri pin'siz - pip cozsun:
   "opentelemetry-instrumentation-fastapi",
   "opentelemetry-instrumentation-celery",

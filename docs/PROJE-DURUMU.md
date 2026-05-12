@@ -70,6 +70,16 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 | **SQL** | `scripts/sql/init/04-token-budgets.sql` |
 | **Doctor** | Langfuse container'ları + `token_budgets` tablo + `/stats/langfuse` kontrolleri |
 
+### ✅ AŞAMA 6 — Postiz + MCP Gateway + CrewAI Flows (v0.5.0)
+
+| Parça | Dosya / davranış |
+|---|---|
+| **Postiz & Temporal** | `social` profili altında Postiz, Postgres, Redis ve Temporal (iş zamanlama) container'ları (Port: 5000) |
+| **MCP Gateway** | `mcp` profili altında FastAPI tabanlı Model Context Protocol sunucusu (Port: 8811) |
+| **CrewAI Flows** | `src/crew/flows/campaign_flow.py` — Ajanların birbirine veri aktararak uçtan uca kampanya yürüttüğü Event-Driven yapı |
+| **Postiz Tool** | `src/crew/tools/postiz_tool.py` — Ajanların MCP üzerinden Postiz taslağı oluşturması |
+| **REST** | `/flows/campaign` endpoint'i |
+
 ---
 
 ## 2. Çalışan Servisler
@@ -86,8 +96,11 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 | `adagency-langfuse-redis` | - | obs | ✅ | 5 |
 | `adagency-langfuse-clickhouse` | - | obs | ✅ | 5 |
 | `adagency-langfuse-minio` | - | obs | ✅ | 5 |
+| `adagency-postiz` | **5000** | social | ✅ | 6 |
+| `adagency-mcp-gateway` | **8811** | mcp | ✅ | 6 |
+| `adagency-temporal` (ve bilesenleri) | - | social | ✅ | 6 |
 
-Bekleyen: Postiz (6), MCP Gateway (6), CRM (7), Flowise (8).
+Bekleyen: CRM (7), Flowise (8).
 
 ---
 
@@ -163,11 +176,18 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 
 ---
 
-## 6. Sonraki Adım: AŞAMA 6 — Postiz + MCP Gateway
+### ✅ AŞAMA 7 — CRM & Fatura Servisi (v0.6.0)
 
-- Postiz self-hosted (sosyal medya paylaşım otoması)
-- MCP Gateway (ajan<->araç köprüsü)
-- CrewAI Flow'larla çok-ajanlı kampanya pipeline'ı
+- **Postgres Şeması:** `crm.clients`, `crm.proposals`, `crm.invoices` tabloları eklendi (`05-crm-schema.sql`).
+- **PDF Oluşturucu:** `reportlab` kullanılarak `/tmp/proposals` ve `/tmp/invoices` altına dinamik teklif ve fatura PDF'leri üreten modül geliştirildi.
+- **REST:** `/crm/clients`, `/crm/proposals`, `/crm/invoices` endpoint'leri çalışır durumda.
+- **CrewAI Tools:** Ajanların CRM'den bilgi çekmesi ve yazması için `GetClientInfo`, `CreateProposal`, `GenerateInvoice` tool'ları eklendi.
+
+## 6. Sonraki Adım: AŞAMA 8 — Flowise UI (Webhook Tetikleyici)
+
+- Flowise ile görsel bir kullanıcı arayüzü kurulması
+- API'yi Flowise node'ları / webhook'ları ile bağlayıp kullanıcıdan brief alarak süreci başlatma
+- Flowise flow'larını export edip projeye ekleme
 
 ---
 

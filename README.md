@@ -50,8 +50,8 @@ curl -X POST http://127.0.0.1:8010/brief `
 | **3.E** | **`/agents`, `/run`, `/dispatch`, `/tasks/{id}`, `/stats/*` endpoint'leri** | **✅** | **`4ed5c40` + `66dbb16`** |
 | 4 | Vault `/vaults` bind mount, poller, `note_embeddings`, hybrid `/vault/search`, `new-client.ps1` | ✅ | `aa0882a` |
 | **5** | **Langfuse v3 self-hosted, LiteLLM OTEL callback, Guardrails (circuit breaker + token budget)** | **✅** | **`87cfb3a`** |
-| 6 | MCP Gateway + Postiz + Tools | ⏳ | - |
-| 7 | CRM & Fatura Servisi | ⏳ | - |
+| **6** | **MCP Gateway + Postiz + CrewAI Flows** | **✅** | **`fd27652`** |
+| **7** | **CRM & Fatura Servisi (Postgres + ReportLab PDF + CrewAI Tools)** | **✅** | **`PENDING`** |
 | 8 | Flowise UI (webhook tetikleyici) | ⏳ | - |
 | 9 | Dokümantasyon | ⏳ | - |
 | 10 | E2E Test (3 senaryo) | ⏳ | - |

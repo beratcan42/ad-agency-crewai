@@ -438,6 +438,7 @@ async def stats_langfuse() -> dict[str, Any]:
 
 @router.post("/flows/campaign", tags=["Flows"])
 async def run_campaign_flow(
+    body: BriefRequest,
     client_id: str = Depends(require_client_id),
 ):
     """
@@ -446,7 +447,12 @@ async def run_campaign_flow(
     """
     try:
         from ..crew.flows.campaign_flow import CampaignFlow
-        flow = CampaignFlow()
+        flow = CampaignFlow(
+            client_id=client_id,
+            brief_title=body.title,
+            brief_content=body.content,
+            sector=body.sector or "Belirtilmemiş"
+        )
         flow.kickoff()
         return {"status": "success", "state": flow.state.model_dump()}
     except Exception as e:
