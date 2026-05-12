@@ -29,6 +29,8 @@ _EXEMPT_PATTERNS = [
     re.compile(r"^/openapi\.json$"),
     re.compile(r"^/admin/.*"),
     re.compile(r"^/static/.*"),
+    re.compile(r"^/agents/?$"),         # GET /agents — registry listesi (public)
+    re.compile(r"^/tasks/[a-f0-9-]+$"), # task_id ile durum sorgusu
 ]
 
 # X-Client-Id geçerli format: [a-z0-9_-]{2,64}

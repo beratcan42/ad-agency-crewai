@@ -15,7 +15,10 @@ celery_app = Celery(
     "ad_agency",
     broker=settings.CELERY_BROKER_URL or settings.REDIS_URL,
     backend=settings.CELERY_RESULT_BACKEND or settings.REDIS_URL,
-    include=["src.workers.account_manager_worker"],
+    include=[
+        "src.workers.account_manager_worker",  # geriye donuk, deprecate planlanyor
+        "src.workers.agent_tasks",             # Asama 3: 12 ajan factory
+    ],
 )
 
 # Queue tanımları (görev tipine göre)
@@ -43,6 +46,9 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
 )
 
+from .agent_tasks import get_task_routes  # noqa: E402
+
 celery_app.conf.task_routes = {
     "src.workers.account_manager_worker.run": {"queue": "q_heavy", "routing_key": "heavy.account_manager"},
+    **get_task_routes(),
 }

@@ -112,7 +112,22 @@ class ModelRouter:
                 )
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 content = response["choices"][0]["message"]["content"]
-                usage = dict(response.get("usage") or {})
+                # LiteLLM usage pydantic obje olabilir, JSON-serializable dict'e cevir
+                usage_raw = response.get("usage") or {}
+                if hasattr(usage_raw, "model_dump"):
+                    usage = usage_raw.model_dump()
+                elif hasattr(usage_raw, "dict"):
+                    usage = usage_raw.dict()
+                else:
+                    try:
+                        usage = dict(usage_raw)
+                        for k, v in list(usage.items()):
+                            if hasattr(v, "model_dump"):
+                                usage[k] = v.model_dump()
+                            elif hasattr(v, "dict"):
+                                usage[k] = v.dict()
+                    except Exception:
+                        usage = {}
                 log.info(
                     "router.success",
                     extra={

@@ -50,6 +50,57 @@ class BriefResponse(BaseModel):
     usage: dict[str, Any]
 
 
+# --- Asama 3.E: Tek-ajan + async dispatch endpoint'leri ----------
+
+
+class AgentRunRequest(BaseModel):
+    title: str = Field(..., max_length=200)
+    content: str = Field(..., max_length=20_000)
+    sector: str | None = None
+    extra_context: str | None = Field(default=None, max_length=10_000)
+    temperature: float = Field(default=0.4, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=800, ge=10, le=4000)
+
+
+class AgentRunResponse(BaseModel):
+    client_id: str
+    agent_id: str
+    provider: str
+    model: str
+    latency_ms: int
+    content: str
+    usage: dict[str, Any]
+
+
+class AgentDispatchResponse(BaseModel):
+    task_id: str
+    agent_id: str
+    client_id: str
+    queue: str
+    status: str = "queued"
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    ready: bool
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class AgentInfo(BaseModel):
+    id: str
+    role: str
+    goal: str
+    queue: str
+    chain: list[dict[str, str]]
+
+
+class AgentsListResponse(BaseModel):
+    count: int
+    agents: list[AgentInfo]
+
+
 # --- Helpers ------------------------------------------------------
 
 
@@ -175,3 +226,133 @@ async def submit_brief(
         content=result.content,
         usage=result.usage,
     )
+
+
+# --- Asama 3.E: Agent runner & dispatch --------------------------
+
+
+@router.get("/agents", response_model=AgentsListResponse, tags=["agents"])
+async def list_agents() -> AgentsListResponse:
+    """12 ajanin metadata + zincir bilgisini dondurur (X-Client-Id gerekmez)."""
+    from ..config.loader import get_agent_meta, load_models_config
+    from ..crew.agents.registry import get_all_agent_ids
+
+    cfg = load_models_config()
+    agents_block = cfg.get("agents", {})
+    items: list[AgentInfo] = []
+    for agent_id in get_all_agent_ids():
+        meta = agents_block.get(agent_id, {})
+        items.append(
+            AgentInfo(
+                id=agent_id,
+                role=str(meta.get("role", "")),
+                goal=str(meta.get("goal", "")),
+                queue=str(meta.get("queue", "q_heavy")),
+                chain=[
+                    {"provider": str(c.get("provider")), "model": str(c.get("model"))}
+                    for c in meta.get("chain", [])
+                ],
+            )
+        )
+    return AgentsListResponse(count=len(items), agents=items)
+
+
+@router.post("/agents/{agent_id}/run", response_model=AgentRunResponse, tags=["agents"])
+async def run_agent_sync(
+    agent_id: str,
+    body: AgentRunRequest,
+    client_id: str = Depends(require_client_id),
+) -> AgentRunResponse:
+    """Bir ajani senkron calistirir (LLM'i bekler, sonucu dondurur).
+
+    Test/demo icin uygun. Uretimde uzun-surecek ajanlar icin
+    /agents/{agent_id}/dispatch kullanin (Celery'e gonderir).
+    """
+    from ..crew.agents.registry import get_all_agent_ids
+    from ..crew.builder import run_agent as _run_agent
+
+    if agent_id not in get_all_agent_ids():
+        raise HTTPException(status_code=404, detail=f"Bilinmeyen ajan: {agent_id}")
+
+    try:
+        result = await _run_agent(
+            agent_id=agent_id,
+            client_id=client_id,
+            brief_title=body.title,
+            brief_content=body.content,
+            sector=body.sector,
+            extra_context=body.extra_context,
+            temperature=body.temperature,
+            max_tokens=body.max_tokens,
+        )
+    except Exception as e:
+        log.exception("agent_run.failed", extra={"agent_id": agent_id, "client_id": client_id})
+        raise HTTPException(status_code=502, detail=f"Ajan cagrisi basarisiz: {e}")
+
+    return AgentRunResponse(
+        client_id=client_id,
+        agent_id=agent_id,
+        provider=result.provider,
+        model=result.model,
+        latency_ms=result.latency_ms,
+        content=result.content,
+        usage=result.usage,
+    )
+
+
+@router.post(
+    "/agents/{agent_id}/dispatch",
+    response_model=AgentDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["agents"],
+)
+async def dispatch_agent(
+    agent_id: str,
+    body: AgentRunRequest,
+    client_id: str = Depends(require_client_id),
+) -> AgentDispatchResponse:
+    """Bir ajani async olarak Celery'e gonderir, task_id dondurur."""
+    from ..config.loader import get_agent_meta
+    from ..crew.agents.registry import get_all_agent_ids
+    from ..workers.agent_tasks import get_task_for
+
+    if agent_id not in get_all_agent_ids():
+        raise HTTPException(status_code=404, detail=f"Bilinmeyen ajan: {agent_id}")
+
+    task = get_task_for(agent_id)
+    queue = get_agent_meta(agent_id).get("queue", "q_heavy")
+
+    async_result = task.apply_async(
+        kwargs={
+            "client_id": client_id,
+            "brief_title": body.title,
+            "brief_content": body.content,
+            "sector": body.sector,
+            "extra_context": body.extra_context,
+            "max_tokens": body.max_tokens,
+            "temperature": body.temperature,
+        }
+    )
+    return AgentDispatchResponse(
+        task_id=async_result.id,
+        agent_id=agent_id,
+        client_id=client_id,
+        queue=queue,
+    )
+
+
+@router.get("/tasks/{task_id}", response_model=TaskStatusResponse, tags=["agents"])
+async def task_status(task_id: str) -> TaskStatusResponse:
+    """Celery task'in durumunu dondurur (PENDING/STARTED/SUCCESS/FAILURE)."""
+    from ..workers.celery_app import celery_app
+
+    res = celery_app.AsyncResult(task_id)
+    if res.successful():
+        return TaskStatusResponse(
+            task_id=task_id, status=res.status, ready=True, result=res.result
+        )
+    if res.failed():
+        return TaskStatusResponse(
+            task_id=task_id, status=res.status, ready=True, error=str(res.info)
+        )
+    return TaskStatusResponse(task_id=task_id, status=res.status, ready=res.ready())
