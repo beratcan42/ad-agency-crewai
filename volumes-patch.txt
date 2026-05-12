@@ -1,0 +1,12 @@
+﻿  postiz_postgres_data:
+    name: adagency_postiz_postgres_data
+  postiz_redis_data:
+    name: adagency_postiz_redis_data
+  postiz_config:
+    name: adagency_postiz_config
+  postiz_uploads:
+    name: adagency_postiz_uploads
+  temporal_postgres_data:
+    name: adagency_temporal_postgres_data
+  temporal_es_data:
+    name: adagency_temporal_es_data

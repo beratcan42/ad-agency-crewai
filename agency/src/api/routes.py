@@ -436,3 +436,18 @@ async def stats_langfuse() -> dict[str, Any]:
         "callback_active": _initialized,
     }
 
+@router.post("/flows/campaign", tags=["Flows"])
+async def run_campaign_flow(
+    client_id: str = Depends(require_client_id),
+):
+    """
+    Asama 6: CrewAI Flows kullanarak E2E kampanya pipeline'ini tetikler.
+    (Account Manager -> Strategist -> Copywriter -> Social Media -> Postiz)
+    """
+    try:
+        from ..crew.flows.campaign_flow import CampaignFlow
+        flow = CampaignFlow()
+        flow.kickoff()
+        return {"status": "success", "state": flow.state.model_dump()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
