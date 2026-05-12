@@ -100,16 +100,80 @@ services:
           memory: 640m
 
   # ===============================================================
-  # AGENTS PROFILE (Asama 2-3) - PLACEHOLDER, sonraki asamada doldurulacak
+  # AGENTS PROFILE (Asama 2-3)
   # ===============================================================
-  # agency-api:
-  #   build: ./agency
-  #   ...
-  #
-  # agency-worker:
-  #   build: ./agency
-  #   command: celery -A src.tasks worker -Q q_heavy,q_fast,q_io,q_research
-  #   ...
+
+  agency-api:
+    build:
+      context: ./agency
+      dockerfile: Dockerfile
+    image: adagency/agency-api:0.2.0
+    container_name: adagency-api
+    restart: unless-stopped
+    profiles: [agents]
+    env_file:
+      - .env
+    environment:
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-3}
+      TZ: ${TZ}
+    ports:
+      - "127.0.0.1:${AGENCY_API_PORT:-8010}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3); sys.exit(0 if r.status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  agency-worker:
+    image: adagency/agency-api:0.2.0
+    build:
+      context: ./agency
+      dockerfile: Dockerfile
+    container_name: adagency-worker
+    restart: unless-stopped
+    profiles: [agents]
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ}
+      CELERY_WORKER: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - sh
+      - -c
+      - "celery -A src.workers.celery_app worker --loglevel=info --queues=q_heavy,q_fast,q_io,q_research --concurrency=2 --max-tasks-per-child=200 --hostname=worker@%h"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A src.workers.celery_app inspect ping -d worker@$$HOSTNAME | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
 
   # ===============================================================
   # MEMORY PROFILE (Asama 4) - PLACEHOLDER

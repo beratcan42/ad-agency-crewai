@@ -127,7 +127,8 @@ Write-Host "Container'lar:" -ForegroundColor White
 $containers = @(
     @{ Name='adagency-postgres'; Port=5432; Service='Postgres+pgvector' }
     @{ Name='adagency-redis';    Port=6379; Service='Redis 7' }
-    @{ Name='adagency-api';      Port=8000; Service='Agency API (Asama 2)' }
+    @{ Name='adagency-api';      Port=8010; Service='Agency API (Asama 2)' }
+    @{ Name='adagency-worker';   Port=0;    Service='Celery Worker (Asama 2)' }
     @{ Name='adagency-flowise';  Port=3000; Service='Flowise (Asama 8)' }
     @{ Name='adagency-postiz';   Port=5000; Service='Postiz (Asama 6)' }
     @{ Name='adagency-langfuse'; Port=3001; Service='Langfuse (Asama 5)' }
@@ -152,6 +153,7 @@ Write-Host "Port erisim:" -ForegroundColor White
 $ports = @(
     @{ HostName='127.0.0.1'; Port=5432; Label='Postgres' }
     @{ HostName='127.0.0.1'; Port=6379; Label='Redis' }
+    @{ HostName='127.0.0.1'; Port=8010; Label='Agency API' }
 )
 
 foreach ($p in $ports) {
@@ -179,6 +181,21 @@ if ($pgRunning -eq 'healthy') {
 
     $schemas = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM information_schema.schemata WHERE schema_name IN ('agency','crm','memory','audit');" 2>$null
     if ($schemas) { Write-Status "Schema'lar (agency/crm/memory/audit)" "OK" "$schemas/4" }
+}
+
+# --- Agency API detay --------------------------------------------
+$apiRunning = Test-ContainerHealth -Name 'adagency-api'
+if ($apiRunning -eq 'healthy') {
+    Write-Host ""
+    Write-Host "Agency API detay:" -ForegroundColor White
+    try {
+        $h = Invoke-RestMethod -Uri "http://127.0.0.1:8010/healthz" -TimeoutSec 5
+        Write-Status "Agency API /healthz" "OK" "version $($h.version) status=$($h.status)"
+        Write-Status "API -> Postgres ping" "OK" "$($h.checks.postgres.latency_ms) ms"
+        Write-Status "API -> Redis ping" "OK" "$($h.checks.redis.latency_ms) ms"
+    } catch {
+        Write-Status "Agency API /healthz" "FAIL" $_.Exception.Message
+    }
 }
 
 # --- Redis detay -------------------------------------------------

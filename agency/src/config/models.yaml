@@ -1,0 +1,53 @@
+# =================================================================
+# Hibrit Model Router yapılandırması
+# =================================================================
+# Aşama 2: sadece account_manager dolu. Aşama 3'te 11 ajan eklenecek.
+# Her zincir 4 katmanlı: OpenRouter free -> Gemini AI Pro -> alternatif -> Ollama
+# =================================================================
+
+providers:
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    rpm: 20
+    daily: 200
+    timeout: 30.0
+  google:
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GOOGLE_GEMINI_API_KEY
+    rpm: 60
+    daily: 1500
+    timeout: 30.0
+  ollama:
+    base_url: http://host.docker.internal:11434/v1
+    api_key_env: null
+    rpm: 9999
+    daily: 99999
+    timeout: 90.0
+
+on_limit: next_in_chain
+
+agents:
+  account_manager:
+    role: "Hesap Yöneticisi (Account Manager / Orchestrator)"
+    goal: "Müşteri brief'ini analiz et, hangi uzman ajanların gerekli olduğunu belirle, sonuçları birleştir."
+    backstory: |
+      Sen 15 yıllık deneyime sahip bir reklam ajansı hesap yöneticisisin.
+      Müşteri ihtiyaçlarını anlama, ekibe yön verme ve teslimat kalitesini garanti etme konusunda uzmansın.
+      Türkçe ve İngilizce iki dilde de profesyonelce iletişim kurabilirsin.
+    chain:
+      - { provider: openrouter, model: "owl/owl-alpha:free" }
+      - { provider: google,     model: "gemini-2.5-pro" }
+      - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free" }
+      - { provider: ollama,     model: "qwen3.5:9b" }
+    max_iter: 10
+    max_execution_time: 300
+
+# --- Aşama 3'te eklenecek 11 ajan ---------------------------------
+# customer_service, strategist, copywriter, social_media, seo_specialist,
+# creative_director, data_analyst, budget_manager, ecommerce_specialist,
+# publisher, crm_billing
+
+embeddings:
+  primary:   { provider: google,     model: "gemini-embedding-001" }
+  fallback:  { provider: ollama,     model: "bge-m3" }
