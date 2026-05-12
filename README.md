@@ -4,7 +4,7 @@
 > OpenRouter free + Google Gemini AI Pro + Ollama hibrit dağılım. Obsidian Vault hafıza,
 > Google Drive senkron, Postiz ile gerçek sosyal medya yayını, CRM/Fatura modülü.
 
-**Durum:** AŞAMA 5 (Langfuse v3 + Guardrails) TAMAMLANDI | API `v0.4.0` | Sonraki: AŞAMA 6 (Postiz + MCP)
+**Durum:** AŞAMA 10 TAMAMLANDI — Final Review aşamasında | API `v0.4.0` | Hedef: `v1.0.0`
 
 > Detaylı kaldığımız yer ve sonraki adımlar için: [`docs/PROJE-DURUMU.md`](docs/PROJE-DURUMU.md)
 
@@ -15,22 +15,20 @@
 ```powershell
 cd c:\YapayZekaa\Cursor\sesli_asistan
 
-# Stack'i baslat (core + agents)
-.\scripts\start.ps1 -Profile core
-.\scripts\start.ps1 -Profile agents
+# Tüm sistemi ayağa kaldır (core + agents + obs + social + mcp + ui)
+docker compose --profile core --profile agents --profile obs --profile social --profile mcp --profile ui up -d
 
-# Saglik kontrolu
+# Sadece temel servisler
+docker compose --profile core --profile agents up -d --wait
+
+# Sağlık kontrolü
 .\scripts\doctor.ps1
 
-# Yeni musteri vault (Drive senkron yola kopyalar)
+# Yeni müşteri vault oluştur
 .\scripts\new-client.ps1 -ClientId "akme-tekstil"
 
-# Vault durumu (mount + heartbeat)
-curl http://127.0.0.1:8010/vault/status
-curl -X POST http://127.0.0.1:8010/brief `
-  -H "Content-Type: application/json" `
-  -H "X-Client-Id: akme-tekstil" `
-  --data "@logs/test-brief.json"
+# Uçtan uca test
+.\scripts\test-e2e.ps1
 
 # Durdur
 .\scripts\stop.ps1
@@ -51,11 +49,11 @@ curl -X POST http://127.0.0.1:8010/brief `
 | 4 | Vault `/vaults` bind mount, poller, `note_embeddings`, hybrid `/vault/search`, `new-client.ps1` | ✅ | `aa0882a` |
 | **5** | **Langfuse v3 self-hosted, LiteLLM OTEL callback, Guardrails (circuit breaker + token budget)** | **✅** | **`87cfb3a`** |
 | **6** | **MCP Gateway + Postiz + CrewAI Flows** | **✅** | **`fd27652`** |
-| **7** | **CRM & Fatura Servisi (Postgres + ReportLab PDF + CrewAI Tools)** | **✅** | **`PENDING`** |
-| **8** | **Flowise UI (docker-compose ui profili + Custom Tool Entegrasyonu)** | **✅** | **`PENDING`** |
-| **9** | **Dokümantasyon (API Reference, Agent Architecture)** | **✅** | **`PENDING`** |
-| 10 | E2E Test (3 senaryo) | ⏳ | - |
-| 11 | Final Review | ⏳ | - |
+| **7** | **CRM & Fatura Servisi (Postgres + ReportLab PDF + CrewAI Tools)** | **✅** | **`6815c76`** |
+| **8** | **Flowise UI (docker-compose ui profili + Custom Tool Entegrasyonu)** | **✅** | **`eeefb38`** |
+| **9** | **Dokümantasyon (API Reference, Agent Architecture)** | **✅** | **`8a0ec1f`** |
+| **10** | **E2E Test (Müşteri Senkronu, Flow, Fatura, Telemetry)** | **✅** | **`3f205d2`** |
+| 11 | Final Review (v1.0.0 Release) | ⏳ | - |
 
 ## Çalışan Servisler
 
@@ -116,6 +114,10 @@ make logs SERVICE=agency-api                  # log filtre
 | **POST** | **`/vault/search`** | `X-Client-Id` | **Hybrid arama (pg_trgm + embedding)** |
 | **GET** | **`/stats/langfuse`** | - | **Langfuse UI/OTEL durumu** |
 | **GET** | **`/stats/budget`** | `X-Client-Id` | **Token bütçesi limiti ve durumu** |
+| **POST** | **`/flows/campaign`** | `X-Client-Id` | **CrewAI Flow: 4 ajan zincirleme kampanya (Aşama 6)** |
+| **GET** | **`/crm/clients`** | `X-Client-Id` | **Müşteri profili + teklifler + faturalar (Aşama 7)** |
+| **POST** | **`/crm/proposals`** | `X-Client-Id` | **Yeni teklif + PDF oluşturma** |
+| **POST** | **`/crm/invoices`** | `X-Client-Id` | **Fatura kesme + PDF (KDV %20)** |
 | GET | `/docs` | - | Swagger UI |
 
 ### 12 Ajan (registry)
@@ -151,61 +153,64 @@ make logs SERVICE=agency-api                  # log filtre
 
 ```
 sesli_asistan/
-├── .env                          # gerçek secrets (gitignored)
-├── .env.example                  # şablon
-├── .gitignore / .gitattributes
-├── docker-compose.yml            # 7 profil: core/agents/memory/ui/social/obs/mcp
-├── Makefile                      # make up/down/logs/doctor
-├── README.md                     # bu dosya
+├── .env                            # gerçek secrets (gitignored)
+├── .env.example                    # şablon
+├── docker-compose.yml              # 7 profil: core/agents/memory/ui/social/obs/mcp
+├── Makefile                        # make up/down/logs/doctor
+├── README.md
 ├── docs/
-│   └── PROJE-DURUMU.md          # detaylı kaldığımız yer rehberi
+│   ├── PROJE-DURUMU.md            # detaylı kaldığımız yer rehberi
+│   ├── API_REFERENCE.md           # tüm endpoint detayları (Aşama 9)
+│   ├── AGENT_ARCHITECTURE.md      # 12 ajan + Flow + Tools (Aşama 9)
+│   └── flowise_templates/         # Flowise Custom Tool rehberi (Aşama 8)
 ├── scripts/
-│   ├── setup.ps1                # aşamalı sihirbaz (Stage 0-1 dolu)
-│   ├── doctor.ps1               # sağlık kontrolü + vault heartbeat + telemetry
-│   ├── new-client.ps1           # drive'e Vault klasoru (sablondan)
+│   ├── setup.ps1                  # aşamalı sihirbaz
+│   ├── doctor.ps1                 # sağlık kontrolü
+│   ├── new-client.ps1             # yeni müşteri vault oluştur
+│   ├── test-e2e.ps1               # uçtan uca test (3 senaryo, Aşama 10)
 │   ├── e2e-demo-akme.ps1
-│   ├── start.ps1, stop.ps1
-│   ├── backup.ps1               # pg_dumpall + vault zip + redis rdb
-│   ├── templates/vault/         # Obsidian klasor sablonu (00-Inbox ... 99-Arsiv)
+│   ├── start.ps1, stop.ps1, backup.ps1
+│   ├── templates/vault/           # Obsidian klasör şablonu
 │   └── sql/init/
 │       ├── 01-init-pgvector.sql
 │       ├── 02-usage-logs.sql
-│       └── 03-note-embeddings.sql   # hybrid RAG chunk tablosu
-├── agency/                       # FastAPI + CrewAI v1.14.x
-│   ├── pyproject.toml           # v0.3.0
-│   ├── Dockerfile               # Python 3.12-slim single-stage
-│   ├── .dockerignore
+│       ├── 03-note-embeddings.sql # hybrid RAG chunk tablosu
+│       ├── 04-token-budgets.sql   # müşteri bütçe tablosu
+│       └── 05-crm-schema.sql     # CRM tabloları (Aşama 7)
+├── agency/                         # FastAPI + CrewAI v1.14.x
+│   ├── pyproject.toml             # v0.4.0
+│   ├── Dockerfile                 # Python 3.12-slim
+│   ├── Dockerfile.mcp             # MCP Gateway imajı (Aşama 6)
 │   └── src/
-│       ├── main.py              # FastAPI app
+│       ├── main.py
 │       ├── api/
-│       │   ├── routes.py
-│       │   └── vault_routes.py  # /vault/*
-│       ├── middleware/          # X-Client-Id zorunlu (stats+agents muaf)
-│       ├── router/
-│       │   ├── model_router.py  # 4-katmanlı fallback + telemetry + rate limit
-│       │   ├── rate_limiter.py  # Redis rolling window (RPM+RPD)
-│       │   └── telemetry.py     # Postgres async insert + agregasyon
-│       ├── config/              # Pydantic Settings + models.yaml (12 ajan)
-│       ├── vault/
-│       │   ├── paths.py store.py embedder.py sync_db.py search.py poller.py
+│       │   ├── routes.py          # ana endpoint'ler + /flows/campaign
+│       │   ├── routes_crm.py      # /crm/* (Aşama 7)
+│       │   └── vault_routes.py    # /vault/*
+│       ├── middleware/            # X-Client-Id + token budget
+│       ├── router/                # model_router + rate_limiter + telemetry
+│       ├── config/                # Pydantic Settings + models.yaml
+│       ├── guardrails/            # circuit_breaker + token_budget (Aşama 5)
+│       ├── observability/         # langfuse_integration (Aşama 5)
+│       ├── crm/
+│       │   └── pdf_gen.py         # ReportLab PDF üretici (Aşama 7)
+│       ├── mcp_gateway/
+│       │   └── server.py          # MCP FastAPI bridge (Aşama 6)
+│       ├── vault/                 # poller + embedder + search
 │       ├── crew/
-│       │   ├── builder.py       # generic run_agent(agent_id, ...)
-│       │   ├── tools/vault_fs.py  # senkron Vault helper (ajan/tool hook)
+│       │   ├── builder.py         # generic run_agent(agent_id, ...)
+│       │   ├── flows/
+│       │   │   └── campaign_flow.py  # CrewAI Flow (Aşama 6)
+│       │   ├── tools/
+│       │   │   ├── vault_fs.py    # senkron Vault helper
+│       │   │   ├── vault_tools.py # @tool sarmalayıcı (Aşama 5)
+│       │   │   ├── crm_tools.py   # CRM araçları (Aşama 7)
+│       │   │   └── postiz_tool.py # Postiz taslak (Aşama 6)
 │       │   └── agents/
-│       │       ├── registry.py  # 12 ajan task template + system_prompt builder
-│       │       └── account_manager.py  # geriye dönük
-│       └── workers/
-│           ├── celery_app.py    # 4 queue + 12 task auto-route
-│           ├── agent_tasks.py   # 12 ajan için Celery task factory
-│           └── account_manager_worker.py  # geriye dönük
-├── mcp/                          # ⏳ Aşama 6
-├── data/                         # gitignored - volume mount
-│   ├── postgres/
-│   ├── redis/
-│   ├── staging/
-│   └── outputs/
+│       │       └── registry.py    # 12 ajan task template + prompt builder
+│       └── workers/               # celery_app + agent_tasks
+├── data/                           # gitignored - volume mount
 └── logs/
-    └── test-brief.json          # /brief test payload
 ```
 
 ## Lisans

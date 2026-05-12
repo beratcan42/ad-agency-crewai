@@ -1,10 +1,10 @@
 # Proje Durumu — Kaldığımız Yer Rehberi
 
-**Son Güncelleme:** 13 Mayıs 2026, 00:15 (UTC+3)
+**Son Güncelleme:** 13 Mayıs 2026, 02:09 (UTC+3)
 **Aktif Branch:** `main`
 **GitHub:** [`beratcan42/ad-agency-crewai`](https://github.com/beratcan42/ad-agency-crewai) (private)
 **API Sürüm:** `0.4.0`
-**Son Commit:** AŞAMA 5 tamamlandı (Langfuse + guardrails + token bütçesi; `git log -1`)
+**Son Commit:** AŞAMA 10 tamamlandı (E2E test; `3f205d2`). Hedef: v1.0.0 Final Review.
 
 ---
 
@@ -88,8 +88,8 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 |---|---|---|---|---|
 | `adagency-postgres` | 5432 | core | ✅ | 1 |
 | `adagency-redis` | 6379 | core | ✅ | 1 |
-| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2–5 |
-| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2–5 |
+| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2–7 |
+| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2–7 |
 | `adagency-langfuse-web` | **3001** | obs | ✅ | 5 |
 | `adagency-langfuse-worker` | - | obs | ✅ | 5 |
 | `adagency-langfuse-postgres` | - | obs | ✅ | 5 |
@@ -101,7 +101,7 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 | `adagency-temporal` (ve bilesenleri) | - | social | ✅ | 6 |
 | `adagency-flowise` | **3000** | ui | ✅ | 8 |
 
-Bekleyen: Dokümantasyon (9), E2E Test (10), Final (11).
+Bekleyen: Final Review (11).
 
 ---
 
@@ -160,6 +160,17 @@ curl -s -X POST http://127.0.0.1:8010/vault/search \
 # Langfuse + Budget (Asama 5)
 curl http://127.0.0.1:8010/stats/langfuse
 curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
+
+# CRM (Asama 7)
+curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/crm/clients
+curl -X POST http://127.0.0.1:8010/crm/proposals \
+  -H "X-Client-Id: akme-tekstil" -H "Content-Type: application/json" \
+  -d '{"title":"Yaz Kampanyası","total_amount":50000}'
+
+# Campaign Flow (Asama 6)
+curl -X POST http://127.0.0.1:8010/flows/campaign \
+  -H "X-Client-Id: akme-tekstil" -H "Content-Type: application/json" \
+  -d '{"title":"Yaz Kampanyası","content":"Yaz için özel indirimler","sector":"E-ticaret"}'
 ```
 
 ---
@@ -173,7 +184,10 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 - **`note_embeddings`**: Eski Postgres volume kullanıyorsanız `03-note-embeddings.sql` dosyasını container'a kopyalayıp `psql -f` ile bir kez çalıştırın.
 - **`token_budgets`**: Eski Postgres volume kullanıyorsanız `04-token-budgets.sql` dosyasını container'a kopyalayıp `psql -f` ile bir kez çalıştırın.
 - **Langfuse v3**: 6 ek container gerektirir (CH + MinIO kaynak tüketimi yüksek); dev makinede 4+ core, 16GB+ RAM önerilir.
-- **Langfuse headless init**: İlk başlatmada org/proje/key otomatik oluşturulur; UI'da ek yapılandırma gerekmez.
+- **Langfuse headless init**: İlk başlatılmada org/proje/key otomatik oluşturulur; UI'da ek yapılandırma gerekmez.
+- **`crm` tabloları**: Eski Postgres volume kullanıyorsanız `05-crm-schema.sql` dosyasını container'a kopyalayıp `psql -f` ile bir kez çalıştırın.
+- **Flowise**: `ui` profilini kaldırdığınızda port 3000'de açılır. Auth: `admin` / `admin` (değiştirin).
+- **CrewAI Flow**: `/flows/campaign` 4 LLM çağrısı yaparak 2-5 dakika sürebilir; istemci timeout'unu buna göre ayarlayın.
 
 ---
 
@@ -196,19 +210,24 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 - **Ajan Mimarisi:** `docs/AGENT_ARCHITECTURE.md` oluşturularak 12 ajanın listesi, araçları ve CrewAI akış prensipleri açıklandı.
 - **README:** Genel proje durumu ve bekleyen/çalışan servisler güncellendi.
 
-## 6. Sonraki Adım: AŞAMA 10 — E2E Test (3 Senaryo)
+### ✅ AŞAMA 10 — E2E Test (v0.9.0)
 
-Sistemin uçtan uca kusursuz çalıştığını doğrulamak için PowerShell veya Python test scriptleri ile şu 3 senaryo işletilecek:
-1. Yeni müşteri oluşturma ve Vault okuma testleri
-2. CrewAI Flows (Kampanya) tetikleme ve Postiz taslağını doğrulama
-3. CRM bütçe kontrolü ve Langfuse'a iz (trace) düştüğünü doğrulama
+Sistemin uçtan uca çalıştığını doğrulayan 3 temel senaryo için `scripts/test-e2e.ps1` betiği eklendi:
+1. Müşteri (CRM/Vault) Senkronizasyonu
+2. Campaign Flow (CrewAI -> Postiz)
+3. Fatura, Bütçe ve Telemetry (Langfuse) Kontrolü
+
+## 6. Sonraki Adım: AŞAMA 11 — Final Review
+
+- Genel sistem incelemesi
+- Projenin `v1.0.0` olarak etiketlenmesi
 
 ---
 
 ## 7. Bir Sonraki Sohbete Geçerken
 
 1. `docs/PROJE-DURUMU.md` + `README.md`
-2. `git log --oneline -8`
+2. `git log --oneline -12`
 3. `.\scripts\doctor.ps1`
-4. `curl http://127.0.0.1:8010/stats/langfuse`
-5. Berat Bey'den **AŞAMA 6** onayı
+4. `.\scripts\test-e2e.ps1`
+5. Berat Bey'den **AŞAMA 11 — Final Review** onayı
