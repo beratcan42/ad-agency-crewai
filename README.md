@@ -212,6 +212,290 @@ sesli_asistan/
 ├── data/                           # gitignored - volume mount
 └── logs/
 ```
+---
+
+## Kullanım Kılavuzu
+
+### 1. Ön Gereksinimler
+
+| Bileşen | Minimum Sürüm | Kontrol |
+|---|---|---|
+| **Windows** | 10/11 (64-bit) | - |
+| **Docker Desktop** | v4.30+ | `docker --version` |
+| **Git** | 2.40+ | `git --version` |
+| **PowerShell** | 7.x+ önerilir | `$PSVersionTable.PSVersion` |
+| **Ollama** (opsiyonel) | 0.20+ | `ollama --version` |
+
+**Donanım önerisi:** Tüm profilleri çalıştırmak için 16 GB+ RAM, 4+ core CPU.
+
+### 2. Kurulum (Sıfırdan)
+
+```powershell
+# 1. Repoyu klonla
+git clone https://github.com/beratcan42/ad-agency-crewai.git
+cd ad-agency-crewai
+
+# 2. .env dosyasını hazırla
+Copy-Item .env.example .env
+# .env içindeki CHANGE_ME değerlerini gerçek parolalarla değiştirin.
+
+# 3. API anahtarlarını ekle (.env içinde)
+#    OPENROUTER_API_KEY=sk-or-...
+#    GOOGLE_GEMINI_API_KEY=AIza...
+
+# 4. Temel servisleri başlat
+docker compose --profile core --profile agents up -d --wait
+
+# 5. Sağlık kontrolü
+.\scripts\doctor.ps1
+```
+
+### 3. Docker Profilleri
+
+Sistem modüler profiller ile yönetilir. İhtiyacınız olan profilleri birleştirerek çalıştırabilirsiniz:
+
+| Profil | İçerik | Kaynak Tüketimi |
+|---|---|---|
+| `core` | Postgres + Redis | ~300 MB |
+| `agents` | Agency API + Celery Worker | ~500 MB |
+| `obs` | Langfuse (6 container: Web, Worker, Postgres, Redis, ClickHouse, MinIO) | ~2 GB |
+| `social` | Postiz + Temporal + yardımcı DB/Redis | ~1 GB |
+| `mcp` | MCP Gateway | ~100 MB |
+| `ui` | Flowise (görsel ajan arayüzü) | ~400 MB |
+
+```powershell
+# Minimum (sadece API + DB)
+docker compose --profile core --profile agents up -d
+
+# Tam sistem (tüm profiller)
+docker compose --profile core --profile agents --profile obs --profile social --profile mcp --profile ui up -d
+
+# Tek profili kaldır
+docker compose --profile ui up -d flowise
+
+# Durdur
+docker compose --profile core --profile agents down
+```
+
+### 4. Ortam Değişkenleri (.env)
+
+`.env.example` dosyasını `.env` olarak kopyalayın ve aşağıdaki **zorunlu** değişkenleri doldurun:
+
+| Değişken | Açıklama | Örnek |
+|---|---|---|
+| `POSTGRES_PASSWORD` | Ana veritabanı şifresi | `my_secret_pg_123` |
+| `REDIS_PASSWORD` | Redis şifresi | `my_secret_redis` |
+| `OPENROUTER_API_KEY` | OpenRouter API anahtarı (ücretsiz modeller) | `sk-or-v1-xxx` |
+| `GOOGLE_GEMINI_API_KEY` | Google Gemini Pro erişimi | `AIzaSy...` |
+| `VAULT_BASE_PATH_HOST` | Müşteri Vault dizini (Windows yolu) | `D:\Google_Drive\AjansKlasoru` |
+
+> **Güvenlik:** `.env` dosyası `.gitignore` içindedir, **asla** commit etmeyin.
+
+### 5. Yeni Müşteri Ekleme
+
+```powershell
+# Vault klasör yapısını oluşturur (00-Inbox, 01-Briefs, ... 99-Arsiv)
+.\scripts\new-client.ps1 -ClientId "yeni-firma"
+
+# Müşteri CRM'de otomatik kayıt olur (ilk API çağrısında)
+```
+
+Müşteri slug'ı (`ClientId`) tüm API çağrılarında `X-Client-Id` header'ı olarak kullanılır.
+
+### 6. Tek Ajan Çalıştırma
+
+12 ajandan herhangi birini doğrudan çalıştırabilirsiniz:
+
+```powershell
+# Senkron çalıştırma (yanıtı bekler, 30-90 sn)
+curl -X POST http://localhost:8010/agents/copywriter/run `
+  -H "X-Client-Id: akme-tekstil" `
+  -H "Content-Type: application/json" `
+  -d '{
+    "title": "Yaz İndirimi",
+    "content": "Tüm plaj ürünlerinde %40 indirim kampanyası",
+    "sector": "E-ticaret",
+    "max_tokens": 800
+  }'
+```
+
+```powershell
+# Asenkron çalıştırma (Celery kuyruğuna gönderir, hemen task_id döner)
+$response = Invoke-RestMethod -Uri "http://localhost:8010/agents/strategist/dispatch" `
+  -Method Post `
+  -Headers @{"X-Client-Id"="akme-tekstil"; "Content-Type"="application/json"} `
+  -Body '{"title":"Pazar Analizi","content":"Türkiye tekstil pazarı"}'
+
+# Görev durumunu sorgula
+Invoke-RestMethod -Uri "http://localhost:8010/tasks/$($response.task_id)"
+```
+
+**Kullanılabilir ajanlar:** `account_manager`, `customer_service`, `strategist`, `copywriter`, `social_media`, `seo_specialist`, `creative_director`, `data_analyst`, `budget_manager`, `ecommerce_specialist`, `publisher`, `crm_billing`
+
+### 7. Kampanya Akışı (CrewAI Flow)
+
+Tek bir API çağrısıyla 4 ajanı zincirleme çalıştıran uçtan uca kampanya pipeline'ı:
+
+```
+Brief → Account Manager → Strategist → Copywriter → Social Media → Postiz Taslağı
+```
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8010/flows/campaign" `
+  -Method Post `
+  -Headers @{"X-Client-Id"="akme-tekstil"; "Content-Type"="application/json"} `
+  -Body '{
+    "title": "Kış Kampanyası 2026",
+    "content": "Kışlık kaban ve mont koleksiyonu için dijital pazarlama kampanyası. Hedef: 25-45 yaş, orta-üst gelir.",
+    "sector": "Tekstil"
+  }' `
+  -TimeoutSec 300
+```
+
+> ⚠️ Flow 4 ardışık LLM çağrısı yaptığı için **2-5 dakika** sürebilir. `TimeoutSec` değerini yeterli tutun.
+
+Yanıt her ajanın çıktısını state içinde döner:
+
+```json
+{
+  "status": "success",
+  "state": {
+    "account_manager_output": "## Brief Özeti ...",
+    "strategist_output": "## Pazar Özeti ...",
+    "copywriter_output": "## Ana Başlık ...",
+    "postiz_result": { "status": "success", "content": "## Platform Stratejisi ..." }
+  }
+}
+```
+
+### 8. CRM ve Fatura İşlemleri
+
+```powershell
+# Müşteri bilgilerini getir (otomatik kayıt yapar)
+Invoke-RestMethod -Uri "http://localhost:8010/crm/clients" `
+  -Headers @{"X-Client-Id"="akme-tekstil"}
+
+# Kampanya teklifi oluştur (PDF üretir)
+Invoke-RestMethod -Uri "http://localhost:8010/crm/proposals" `
+  -Method Post `
+  -Headers @{"X-Client-Id"="akme-tekstil"; "Content-Type"="application/json"} `
+  -Body '{"title": "2026 Yaz Kampanyası", "total_amount": 75000}'
+
+# Fatura kes (KDV %20 otomatik hesaplanır, PDF üretir)
+Invoke-RestMethod -Uri "http://localhost:8010/crm/invoices" `
+  -Method Post `
+  -Headers @{"X-Client-Id"="akme-tekstil"; "Content-Type"="application/json"} `
+  -Body '{"proposal_id": "<UUID>", "amount": 75000, "tax_rate": 20}'
+```
+
+PDF dosyaları container içinde `/tmp/proposals/` ve `/tmp/invoices/` altına oluşturulur.
+
+### 9. Obsidian Vault (Müşteri Dosyaları)
+
+Her müşterinin izole bir Vault klasörü vardır. Ajanlar bu dosyaları okuyup yazabilir:
+
+```powershell
+# Vault durumu
+Invoke-RestMethod -Uri "http://localhost:8010/vault/status"
+
+# Müşteri dosyalarını listele
+Invoke-RestMethod -Uri "http://localhost:8010/vault/files" `
+  -Headers @{"X-Client-Id"="akme-tekstil"}
+
+# Not oku
+Invoke-RestMethod -Uri "http://localhost:8010/vault/note?path=01-Briefs/kampanya.md" `
+  -Headers @{"X-Client-Id"="akme-tekstil"}
+
+# Semantik arama (embedding tabanlı)
+Invoke-RestMethod -Uri "http://localhost:8010/vault/search" `
+  -Method Post `
+  -Headers @{"X-Client-Id"="akme-tekstil"; "Content-Type"="application/json"} `
+  -Body '{"query": "sosyal medya stratejisi", "limit": 5}'
+```
+
+Vault Poller arka planda `.md` dosyalarını izleyerek otomatik olarak vektörel embedding oluşturur.
+
+### 10. İzlenebilirlik (Observability)
+
+#### Langfuse Dashboard
+
+`obs` profilini çalıştırdığınızda Langfuse UI'a erişebilirsiniz:
+
+- **URL:** http://localhost:3001
+- **Auth:** `.env`'deki `LANGFUSE_INIT_USER_*` değerleri
+- Her LLM çağrısı otomatik olarak Langfuse'a trace olarak gönderilir.
+
+```powershell
+# Langfuse bağlantı durumu
+Invoke-RestMethod -Uri "http://localhost:8010/stats/langfuse"
+
+# Token kullanım istatistikleri
+Invoke-RestMethod -Uri "http://localhost:8010/stats/usage?hours=24"
+
+# Müşteri token bütçesi
+Invoke-RestMethod -Uri "http://localhost:8010/stats/budget" `
+  -Headers @{"X-Client-Id"="akme-tekstil"}
+
+# Rate limit durumu (tüm model/provider)
+Invoke-RestMethod -Uri "http://localhost:8010/stats/limits"
+```
+
+#### Koruma Katmanları (Guardrails)
+
+| Mekanizma | Açıklama | Yapılandırma (.env) |
+|---|---|---|
+| **Rate Limiter** | Redis rolling window ile müşteri başına RPM/RPD | `CREW_MAX_RPM=20` |
+| **Circuit Breaker** | Ardışık 3 hata → model 5dk devre dışı, otomatik fallback | `CIRCUIT_BREAKER_FAILURE_THRESHOLD=3` |
+| **Token Budget** | Müşteri başına günlük token limiti, aşılırsa HTTP 429 | `TOKEN_BUDGET_DAILY_GLOBAL=500000` |
+
+### 11. Flowise (Görsel Arayüz)
+
+`ui` profilini çalıştırdığınızda Flowise'a erişebilirsiniz:
+
+- **URL:** http://localhost:3000
+- **Auth:** admin / admin (`.env`'den değiştirin)
+- Flowise üzerinden Custom Tool ile Agency API'yi tetikleyebilirsiniz.
+- Detaylı entegrasyon rehberi: [`docs/flowise_templates/README.md`](docs/flowise_templates/README.md)
+
+### 12. Yedekleme ve Bakım
+
+```powershell
+# Tam yedek (Postgres dump + Redis RDB + Vault zip)
+.\scripts\backup.ps1
+
+# Sağlık kontrolü (DB, Redis, Langfuse, Vault, tüm container'lar)
+.\scripts\doctor.ps1
+
+# Uçtan uca test (3 senaryo)
+.\scripts\test-e2e.ps1
+
+# Docker imajlarını yeniden derle (kod değişikliği sonrası)
+docker compose --profile agents build --no-cache agency-api
+docker compose --profile agents up -d agency-api
+```
+
+### 13. Sorun Giderme
+
+| Sorun | Çözüm |
+|---|---|
+| `port 8000 already in use` | `.env`'de `AGENCY_API_PORT=8010` olarak bırakın (varsayılan). |
+| Langfuse container'ları başlamıyor | Minimum 8 GB boş RAM gerekli. `obs` profilini opsiyonel tutabilirsiniz. |
+| Ollama modelleri çalışmıyor | `ollama list` ile modellerin yüklü olduğunu doğrulayın. Container `host.docker.internal:11434` kullanır. |
+| Flow timeout (> 5dk) | OpenRouter ücretsiz modellerin yanıt süreleri değişkendir. `.env`'de `CREW_MAX_EXECUTION_TIME=600` artırın. |
+| `crm.clients` tablosu yok | Eski DB volume: `Get-Content scripts\sql\init\05-crm-schema.sql \| docker exec -i adagency-postgres psql -U agency -d agency` |
+| `note_embeddings` tablosu yok | Eski DB volume: `Get-Content scripts\sql\init\03-note-embeddings.sql \| docker exec -i adagency-postgres psql -U agency -d agency` |
+| Swagger UI'a erişim | http://localhost:8010/docs adresini ziyaret edin. |
+
+### 14. Detaylı Dokümantasyon
+
+| Doküman | İçerik |
+|---|---|
+| [`docs/PROJE-DURUMU.md`](docs/PROJE-DURUMU.md) | Proje tarihçesi, aşama detayları, kaldığımız yer |
+| [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | Tüm endpoint'lerin istek/yanıt örnekleri |
+| [`docs/AGENT_ARCHITECTURE.md`](docs/AGENT_ARCHITECTURE.md) | 12 ajan listesi, tool'lar, Flow mimarisi, fallback katmanları |
+| [`docs/flowise_templates/README.md`](docs/flowise_templates/README.md) | Flowise Custom Tool ve Webhook entegrasyon rehberi |
+
+---
 
 ## Lisans
 
