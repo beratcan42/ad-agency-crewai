@@ -181,6 +181,14 @@ if ($pgRunning -eq 'healthy') {
 
     $schemas = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM information_schema.schemata WHERE schema_name IN ('agency','crm','memory','audit');" 2>$null
     if ($schemas) { Write-Status "Schema'lar (agency/crm/memory/audit)" "OK" "$schemas/4" }
+
+    $usageTbl = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='agency' AND tablename='usage_logs';" 2>$null
+    if ($usageTbl -and ($usageTbl.Trim() -eq '1')) {
+        $rowCount = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM agency.usage_logs;" 2>$null
+        Write-Status "agency.usage_logs" "OK" "tablo var ($($rowCount.Trim()) row)"
+    } else {
+        Write-Status "agency.usage_logs" "WARN" "tablo yok (3.D SQL apply edilmemis)"
+    }
 }
 
 # --- Agency API detay --------------------------------------------
@@ -196,6 +204,65 @@ if ($apiRunning -eq 'healthy') {
     } catch {
         Write-Status "Agency API /healthz" "FAIL" $_.Exception.Message
     }
+
+    # 12 ajan registry
+    try {
+        $ag = Invoke-RestMethod -Uri "http://127.0.0.1:8010/agents" -TimeoutSec 5
+        if ($ag.count -eq 12) {
+            Write-Status "12 ajan registry" "OK" "$($ag.count) ajan tanimli"
+        } else {
+            Write-Status "12 ajan registry" "WARN" "$($ag.count) ajan (12 beklenir)"
+        }
+    } catch { Write-Status "/agents endpoint" "FAIL" $_.Exception.Message }
+
+    # 24 saatlik kullanim ozeti (telemetry)
+    try {
+        $u = Invoke-RestMethod -Uri "http://127.0.0.1:8010/stats/usage?hours=24" -TimeoutSec 8
+        $calls = $u.totals.total_calls
+        $tokens = $u.totals.total_tokens
+        if ($calls -gt 0) {
+            $succ = ($u.by_status | Where-Object { $_.status -eq 'success' } | Select-Object -ExpandProperty count -First 1)
+            $fall = ($u.by_status | Where-Object { $_.status -eq 'fallback' } | Select-Object -ExpandProperty count -First 1)
+            $skip = ($u.by_status | Where-Object { $_.status -eq 'skip_ratelimit' } | Select-Object -ExpandProperty count -First 1)
+            Write-Status "Telemetry (24h)" "OK" "$calls cagri, $tokens token (success=$succ fallback=$fall skip=$skip)"
+        } else {
+            Write-Status "Telemetry (24h)" "INFO" "henuz cagri yok"
+        }
+    } catch { Write-Status "/stats/usage endpoint" "FAIL" $_.Exception.Message }
+
+    # Anlik rate limit snapshot
+    try {
+        $l = Invoke-RestMethod -Uri "http://127.0.0.1:8010/stats/limits" -TimeoutSec 5
+        $hot = $l.items | Where-Object { $_.rpm_pct -ge 0.5 -or $_.rpd_pct -ge 0.5 }
+        if ($hot) {
+            Write-Status "Sicak modeller" "WARN" "$($hot.Count) model %50+ kullanimda"
+            foreach ($m in $hot) {
+                Write-Host ("      - {0}/{1}: RPM {2:P0} ({3}/{4}), RPD {5:P0} ({6}/{7})" -f $m.provider, $m.model, $m.rpm_pct, $m.rpm_used, $m.rpm_limit, $m.rpd_pct, $m.rpd_used, $m.rpd_limit) -ForegroundColor Yellow
+            }
+        } else {
+            Write-Status "Rate limit havuzu" "OK" "$($l.count) model, hepsi <%50"
+        }
+    } catch { Write-Status "/stats/limits endpoint" "FAIL" $_.Exception.Message }
+}
+
+# --- Celery worker detay -----------------------------------------
+$wkRunning = Test-ContainerHealth -Name 'adagency-worker'
+if ($wkRunning -eq 'healthy') {
+    Write-Host ""
+    Write-Host "Celery worker detay:" -ForegroundColor White
+    try {
+        $reg = docker exec adagency-worker celery -A src.workers.celery_app inspect registered 2>$null | Select-String "src.workers.agent_tasks\." | Measure-Object | Select-Object -ExpandProperty Count
+        if ($reg -ge 12) {
+            Write-Status "Celery task registry" "OK" "$reg / 12 ajan task'i aktif"
+        } else {
+            Write-Status "Celery task registry" "WARN" "$reg / 12 task (eksik)"
+        }
+    } catch { Write-Status "Celery inspect" "FAIL" $_.Exception.Message }
+
+    try {
+        $active = docker exec adagency-worker celery -A src.workers.celery_app inspect active_queues 2>$null | Select-String "name" | Measure-Object | Select-Object -ExpandProperty Count
+        Write-Status "Aktif queue'lar" "OK" "$active queue (q_heavy, q_fast, q_io, q_research)"
+    } catch { Write-Status "Aktif queue'lar" "WARN" "okunamiyor" }
 }
 
 # --- Redis detay -------------------------------------------------

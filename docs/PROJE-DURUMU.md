@@ -1,284 +1,160 @@
 # Proje Durumu — Kaldığımız Yer Rehberi
 
-**Son Güncelleme:** 12 Mayıs 2026, 19:15 (UTC+3)
+**Son Güncelleme:** 12 Mayıs 2026, 21:10 (UTC+3)
 **Aktif Branch:** `main`
-**Son Commit:** `f842b59 feat(stage-2): Agency Core - FastAPI + CrewAI 1.14.3 + Account Manager + Celery`
+**GitHub:** [`beratcan42/ad-agency-crewai`](https://github.com/beratcan42/ad-agency-crewai) (private)
+**Son Commit:** AŞAMA 3 tamamlandı (bkz. commit özetleri aşağıda)
 
 ---
 
 ## 1. Tamamlanan Aşamalar
 
-### ✅ AŞAMA 0 — Preflight (sistem tespiti)
+### ✅ AŞAMA 0 — Preflight
 
-| Bileşen | Sürüm | Durum |
+Sistem hazır: Windows 11 + Docker Desktop v29.4.3 + Ollama v0.23.2 + Google Drive senkron (`D:\Google_Drive\AjansKlasoru`) + Git + GitHub Desktop.
+
+Local Ollama modelleri: `qwen3.5:9b`, `qwen3:8b`, `qwen3-coder:30b`, `qwen3-vl:8b`, `gemma3:12b`, `gpt-oss:20b`, `llama3.1:latest`.
+
+API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
+
+### ✅ AŞAMA 1 — Foundation (`305a3ed`)
+
+- `adagency-postgres` (Postgres 16.13 + pgvector 0.8.2)
+- `adagency-redis` (Redis 7.4.9, 512MB, `allkeys-lru`, AOF)
+- Schema'lar: `agency`, `crm`, `memory`, `audit`
+
+### ✅ AŞAMA 2 — Agency Core (`f842b59`)
+
+- FastAPI + CrewAI v1.14.3 + Celery 5.6.3
+- LiteLLM 4-katmanlı fallback router (minimal)
+- 1 ajan: Account Manager (uçtan uca canlı)
+- Endpoint: `/healthz`, `/readyz`, `/version`, `/brief`
+
+### ✅ AŞAMA 3 — 12 Ajan + Akıllı Router
+
+| Alt-aşama | İçerik | Commit |
 |---|---|---|
-| Windows 11 | build 26100 | OK |
-| PowerShell | 5.1.26100 | OK |
-| WSL2 | Ubuntu-22.04 (default) | OK |
-| Docker Desktop | v29.4.3 | Daemon çalışıyor |
-| Ollama | v0.23.2 | Port 11434 dinliyor, qwen3.5:9b + 9 başka model var |
-| Git | v2.52.0 | OK |
-| GitHub Desktop | v3.5.8 | OK |
-| Obsidian | v1.12.7 | OK |
-| Google Drive | v124.0.3.0 | `D:\Google_Drive\AjansKlasoru` senkron aktif |
-| CPU | Ryzen 5 7600 (6c/12t) | `UVICORN_WORKERS=5` |
-| RAM | 31.1 GB | OK |
+| **3.A** | OpenRouter canlı `:free` envanter (29 model) ile 12 ajan zinciri recalibre. Owl Alpha 1M ctx (`openrouter/owl-alpha`). | `665c939` |
+| **3.B** | LiteLLM native syntax: `gemini/<model>` ve `ollama_chat/<model>`. OpenAI-compat shim kaldırıldı. | `665c939` |
+| **3.C** | 12 ajan registry (`crew/agents/registry.py`) + generic `run_agent` builder + Celery task factory (her ajan models.yaml'daki queue'sunda otomatik). | `4ed5c40` |
+| **3.D** | Redis rolling window rate limiter (RPM/RPD) + Postgres `agency.usage_logs` telemetry + proactive fallback (%85 RPM, %90 RPD eşik). | `66dbb16` |
+| **3.E** | `/agents`, `/agents/{id}/run`, `/agents/{id}/dispatch`, `/tasks/{id}`, `/stats/usage`, `/stats/limits` endpoint'leri. | `4ed5c40` + `66dbb16` |
 
-**API Key'leri canlı doğrulandı (.env'de manuel dolu):**
-- `OPENROUTER_API_KEY` (sk-or-..., 73 char) → `/auth/key` OK
-- `GOOGLE_GEMINI_API_KEY` (AIza..., 39 char) → gemini-2.5-flash/pro/2.0-flash listelendi
-- `HUGGINGFACE_TOKEN` (hf_..., 37 char) → user: dddd232
-
-### ✅ AŞAMA 1 — Foundation (commit `305a3ed`)
-
-**Container'lar (her ikisi healthy):**
-- `adagency-postgres` — Postgres 16.13 + pgvector 0.8.2, port 5432
-  - Schemas oluşturuldu: `agency`, `crm`, `memory`, `audit` (4/4)
-  - Tablolar: `agency.clients`, `agency.health_check`
-- `adagency-redis` — Redis 7.4.9, port 6379, `maxmemory 512mb`, `allkeys-lru`, appendonly
-
-**Üretilen Dosyalar (14):**
-- `docker-compose.yml` (7 profil: `core/agents/memory/ui/social/obs/mcp`)
-- `.env` + `.env.example` (random secrets — Postgres/Redis/JWT)
-- `.gitignore` + `.gitattributes` (CRLF için PS1, LF gerisi)
-- `Makefile` (Windows uyumlu)
-- `scripts/setup.ps1` (aşamalı sihirbaz)
-- `scripts/doctor.ps1` (sağlık kontrolü)
-- `scripts/start.ps1`, `stop.ps1`, `backup.ps1`
-- `scripts/sql/init/01-init-pgvector.sql`
-- `README.md`
-
-**Production hardening uygulananlar:**
-- Redis OOM: `maxmemory 512mb`, `allkeys-lru`, appendonly yes
-- Health check her container'da (interval 10s, retries 10)
-- Port binding `127.0.0.1` (dış dünya kapalı)
-- Random secrets (32 byte base64url)
-- `restart: unless-stopped`
-
-### ✅ AŞAMA 2 — Agency Core (commit `f842b59`)
-
-**Yeni Container'lar:**
-- `adagency-api` — FastAPI + CrewAI, **port 8010** (host'ta 8000 başka servis tarafından tutuldu)
-- `adagency-worker` — Celery, 4 queue (`q_heavy/q_fast/q_io/q_research`)
-
-**Bağımlılık Pinleri (`agency/pyproject.toml`):**
-```
-crewai==1.14.3
-crewai-tools>=1.14,<1.16
-litellm                              # CrewAI artık transitive getirmiyor; ekledim
-fastapi==0.136.1
-uvicorn[standard]==0.35.0
-pydantic-settings==2.10.1
-asyncpg==0.30.0
-psycopg[binary]==3.2.5
-sqlalchemy[asyncio]==2.0.36
-alembic==1.14.0
-redis[hiredis]==5.2.1
-pgvector==0.3.6
-celery[redis]==5.6.3                 # kombu transitive (>=5.6)
-langfuse==4.6.1
-opentelemetry-instrumentation-*      # crewai ~=1.34 pin'liyor, biz pinsiz bıraktık
-structlog==24.4.0
-packaging>=24.0                      # litellm langfuse integration için
-pyyaml, watchdog, orjson, tenacity, python-multipart
-```
-
-**Üretilen Modüller (`agency/src/`):**
-```
-src/
-├── main.py                          # FastAPI lifespan + middleware + router
-├── api/routes.py                    # /healthz, /readyz, /version, /brief
-├── middleware/client_context.py     # X-Client-Id zorunlu (JSONResponse, regex doğrulamalı)
-├── router/model_router.py           # 4-katmanlı fallback (litellm)
-├── config/
-│   ├── settings.py                  # Pydantic Settings (.env okur)
-│   ├── loader.py                    # models.yaml yükleyici
-│   └── models.yaml                  # SADECE account_manager dolu
-├── crew/agents/account_manager.py   # System prompt + agent meta
-├── crew/builder.py                  # run_account_manager() async
-├── workers/celery_app.py            # 4 queue + Celery config
-└── workers/account_manager_worker.py # @shared_task on q_heavy
-```
-
-**Canlı Test (Akme Tekstil Brief):**
-```
-POST /brief  (X-Client-Id: akme-tekstil)
-  body: "Akme Tekstil 2026 yaz koleksiyonu IG+TikTok kampanyası..."
-
-Result:
-  provider: openrouter
-  model:    nvidia/nemotron-3-super-120b-a12b:free  (3. fallback)
-  latency:  31.8s
-  tokens:   1018 (418 prompt + 600 completion)
-  cost:     $0
-```
-
-**Fallback Zinciri Gözlemi:**
-1. `owl/owl-alpha:free` → 404/ERROR (OpenRouter'da yok — plan varsayım)
-2. `gemini-2.5-pro` → FAIL (OpenAI-compat base_url `/v1beta/openai/` yanlış)
-3. `nvidia/nemotron-3-super-120b-a12b:free` → ✅ SUCCESS
-
-**Middleware testi:**
-- `POST /brief` (X-Client-Id eksik) → **400** OK
-- `GET /healthz` → **200** (exempt)
+#### Canlı kanıt (12 May 2026)
+- `account_manager` → openrouter/owl-alpha primary, 952 token, 25.3s
+- `social_media` → gemini-2.5-flash (organic fallback), 672 token, 2.7s
+- `crm_billing` → gemini-2.5-flash, 706 token, 2.5s, JSON çıktı doğru
+- `publisher` async dispatch → Celery task SUCCESS, 568 token, 2.3s
+- `/stats/usage`: 4 çağrı, 2330 token, by_status: success=3 fallback=1
+- `/stats/limits`: 20 model takip ediliyor (örn. gemini-2.5-flash %20 RPM)
+- Postgres `agency.usage_logs`: tablo aktif, 5 index
 
 ---
 
-## 2. Önemli Çevresel Değişkenler
+## 2. Çalışan Servisler
 
-```
-PROJE KOK         : c:\YapayZekaa\Cursor\sesli_asistan
-VAULT_BASE_PATH_HOST : D:\Google_Drive\AjansKlasoru        # Drive senkron aktif
-VAULT_BASE_PATH      : /vaults                              # container içi
-AGENCY_API_PORT      : 8010 (host) -> 8000 (container)
-UVICORN_WORKERS      : 5
-OLLAMA_URL           : http://host.docker.internal:11434
-OLLAMA_DEFAULT_MODEL : qwen3.5:9b
-COMPOSE_PROJECT_NAME : adagency
-```
+| Container | Port (host) | Profil | Health | Aşama |
+|---|---|---|---|---|
+| `adagency-postgres` | 5432 | core | ✅ | 1 |
+| `adagency-redis` | 6379 | core | ✅ | 1 |
+| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2-3 |
+| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2-3 |
 
-API key'ler `.env`'de dolu (sk-or-..., AIzaSy..., hf_...). `.env` **gitignored**.
-
-Random secrets (üretilmiş, `.env`'de):
-- `POSTGRES_PASSWORD` (24B base64url)
-- `REDIS_PASSWORD` (24B base64url)
-- `POSTIZ_JWT_SECRET` (32B base64url)
-- `FLOWISE_PASSWORD`, `LANGFUSE_SECRET`, `POSTIZ_DB_PASS`
+Bekleyen: Langfuse (5), Postiz (6), Flowise (8), MCP Gateway (6), CRM (7).
 
 ---
 
-## 3. Sonraki Aşama: AŞAMA 3 — 12 Ajan + Hibrit Router
+## 3. 12 Ajan Modeli ve Queue Dağılımı
 
-> Plan dosyası: `c:\Users\BERAT\.cursor\plans\crewai_multi-agent_reklam_ajansı_1111b97e.plan.md`
-
-### 3.A — OpenRouter free model envanteri (canlı, ilk iş)
-
-```powershell
-curl.exe -s -H "Authorization: Bearer $env:OPENROUTER_API_KEY" `
-  https://openrouter.ai/api/v1/models | ConvertFrom-Json | `
-  Where-Object { $_.id -like "*:free" } | Select-Object id, context_length
-```
-
-`agency/src/config/models.yaml` her ajan için bu listeden geçerli `:free` modellerle yeniden kalibre edilecek. Plan'daki varsayım model adları (owl/owl-alpha, qwen3.6-plus, gemma-4-27b, qwen3-coder-480b, qwen3-next-80b vb.) **doğrulanmadan kullanılmamalı**.
-
-### 3.B — Gemini provider düzeltmesi
-
-Şu anki `models.yaml`:
-```yaml
-google:
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai
-```
-
-LiteLLM ile Gemini için doğru kullanım:
-- Model adı: `gemini/gemini-2.5-flash` (native) **VEYA**
-- OpenAI-compat: base_url `https://generativelanguage.googleapis.com/v1beta/openai/` (sondaki `/` önemli)
-- API key parametresi: `api_key` LiteLLM tarafında **`GOOGLE_API_KEY`** env var bekler
-
-`agency/src/router/model_router.py` içindeki `_build_litellm_params` Google dalı yeniden test edilmeli.
-
-### 3.C — 11 yeni ajan dosyası
-
-`agency/src/crew/agents/` altına:
-- `customer_service.py` — Müşteri Hizmetleri & Brief
-- `strategist.py` — Strateji Analisti (DDG MCP)
-- `copywriter.py` — Copywriter
-- `social_media.py` — Sosyal Medya Uzmanı
-- `seo_specialist.py` — SEO Uzmanı
-- `creative_director.py` — Kreatif Direktör (vision)
-- `data_analyst.py` — Veri Analisti (sandbox)
-- `budget_manager.py` — Reklam Bütçe Yöneticisi
-- `ecommerce_specialist.py` — E-ticaret & Ürün
-- `publisher.py` — Yayın & Zamanlama (Postiz)
-- `crm_billing.py` — CRM & Fatura
-
-Her biri için `models.yaml` chain'i + `tasks.yaml` görev tanımı + Celery worker task'ı (uygun queue ile).
-
-**Queue dağılımı (planda):**
-| Queue | Ajanlar | Concurrency |
-|---|---|---|
-| `q_heavy` | Account Manager, Strateji, Copywriter, Kreatif | 2 |
-| `q_fast` | Müşteri Hizmetleri, Yayın, CRM/Fatura | 4 |
-| `q_io` | Sosyal Medya, Veri Analist | 2 |
-| `q_research` | SEO, Bütçe, E-ticaret | 2 |
-
-### 3.D — Akıllı Router yükseltmesi
-
-- **Redis rolling window sayacı**: `c:{client}:rpm:{minute}` ve `c:{client}:daily:{date}` keyleriyle her model için RPM + günlük kullanım takibi
-- **Proaktif fallback**: Limit %90'a ulaşmadan bir sonraki katmana geç (429 beklemeden)
-- **Telemetri**: Postgres `agency.usage_log` tablosu (client_id, agent, provider, model, tokens, cost, latency)
-- **Dynamic Agent Tuner** (`router/dynamic_agent_tuner.py`): Provider değişiminde CrewAI agent `max_rpm` ve `max_execution_time` runtime ezilir
-  - Ollama: `max_rpm=None`, `max_execution_time=600`
-  - Google: `max_rpm=60`, `max_execution_time=300`
-  - OpenRouter: `max_rpm=20`, `max_execution_time=300`
-
-### 3.E — Orchestrator API endpoint'leri
-
-- `POST /agents/{agent_id}/run` — tek ajan manual test
-- `POST /campaigns` — Account Manager → seçtiği ajanları Celery'ye dispatch
-- `GET /campaigns/{id}` — durum takibi
-- `GET /stats/usage` — model/ajan/müşteri başına token kullanımı
-
-### 3.F — Doctor + commit
-
-`doctor.ps1`'e her ajan worker'ı için ayrı health gösterimi.
-
-**Tahmini süre:** 40-60 dakika
+| # | Agent ID | Primary | Gemini | Alt. | Ollama | Queue |
+|---|---|---|---|---|---|---|
+| 1 | `account_manager` | `openrouter/owl-alpha` (1M) | `gemini-2.5-pro` | `nvidia/nemotron-3-super-120b` | `qwen3.5:9b` | q_heavy |
+| 2 | `customer_service` | `google/gemma-4-31b-it:free` | `gemini-2.5-flash` | `meta-llama/llama-3.3-70b` | `gemma3:12b` | q_fast |
+| 3 | `strategist` | `nvidia/nemotron-3-super-120b` | `gemini-2.5-pro` | `openai/gpt-oss-120b` | `gpt-oss:20b` | q_heavy |
+| 4 | `copywriter` | `meta-llama/llama-3.3-70b` | `gemini-2.5-flash` | `dolphin-mistral-24b-venice` | `gemma3:12b` | q_heavy |
+| 5 | `social_media` | `qwen/qwen3-next-80b-a3b-instruct` | `gemini-2.5-flash` | `llama-3.3-70b` | `qwen3:8b` | q_fast |
+| 6 | `seo_specialist` | `google/gemma-4-31b-it` | `gemini-2.5-pro` | `qwen3-next-80b` | `gemma3:12b` | q_research |
+| 7 | `creative_director` | `nvidia/nemotron-nano-12b-v2-vl` (vision) | `gemini-2.5-pro` | `gemma-4-31b-it` | `qwen3-vl:8b` | q_heavy |
+| 8 | `data_analyst` | `qwen/qwen3-coder:free` | `gemini-2.5-pro` | `gpt-oss-120b` | `qwen3-coder:30b` | q_research |
+| 9 | `budget_manager` | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | `gemini-2.5-pro` | `qwen3-coder:free` | `gpt-oss:20b` | q_research |
+| 10 | `ecommerce_specialist` | `qwen3-next-80b-a3b-instruct` | - | `gemini-2.5-flash` | `qwen3:8b` | q_research |
+| 11 | `publisher` | `gemini-2.5-flash` | - | `llama-3.2-3b-instruct` | `llama3.1` | q_fast |
+| 12 | `crm_billing` | `gemini-2.5-flash` | - | `qwen3-coder:free` | `qwen3-coder:30b` | q_fast |
 
 ---
 
-## 4. Bilinen Sorunlar / TODO
+## 4. API Endpoint Kontrol Listesi
 
-| # | Sorun | Aşama | Öncelik |
-|---|---|---|---|
-| 1 | `owl/owl-alpha:free` OpenRouter'da yok — models.yaml kalibrasyonu | 3.A | YÜKSEK |
-| 2 | Gemini OpenAI-compat base_url yanlış — native syntax | 3.B | YÜKSEK |
-| 3 | `agency-worker` healthcheck `celery inspect ping` yavaş başlıyor (~45s) | 3 | DÜŞÜK |
-| 4 | Multi-stage Dockerfile transitive dep kaybediyordu — single-stage kaldı, ileride wheel-based optimize edilebilir | 9 | DÜŞÜK |
-| 5 | Vault klasörü `D:\Google_Drive\AjansKlasoru` altında `Drive'ım` Türkçe — Aşama 4 öncesi Drive dili İngilizce'ye veya bir alt klasöre kurulum | 4 | ORTA |
-
----
-
-## 5. Yeni Sohbette Başlatma Komutu
-
-Yeni sohbette aşağıdaki promptu ver:
-
-```
-Plan: c:\Users\BERAT\.cursor\plans\crewai_multi-agent_reklam_ajansı_1111b97e.plan.md
-Durum: c:\YapayZekaa\Cursor\sesli_asistan\docs\PROJE-DURUMU.md
-
-Berat Bey, kaldığımız yerden devam ediyoruz.
-AŞAMA 2 (Agency Core) tamamlandı, son commit f842b59.
-Account Manager canlı çalışıyor, fallback zinciri test edildi.
-
-Şimdi AŞAMA 3'e geçelim:
-1) Önce OpenRouter'dan canlı :free model envanteri çek
-2) Gemini provider'ı native LiteLLM syntax'ına çevir
-3) 11 yeni ajanı ekle (customer_service ... crm_billing)
-4) Akıllı router (Redis rolling window + proaktif fallback + dynamic agent tuner)
-5) /campaigns endpoint + Celery dispatch
-
-PROJE-DURUMU.md'yi oku, AŞAMA 3.A'dan başla.
-```
-
----
-
-## 6. Hızlı Doğrulama (Yeni sohbet açtığında ilk çalıştırılacak)
-
-```powershell
-cd c:\YapayZekaa\Cursor\sesli_asistan
-
-# 1) Container'lar ayakta mı?
-docker compose ps
-
-# 2) Sağlık kontrolü
-.\scripts\doctor.ps1
-
-# 3) /healthz canlı mı?
+```bash
+# Health
 curl http://127.0.0.1:8010/healthz
 
-# 4) Git durumu
-git log --oneline -5
-git status
+# Ajan registry (public)
+curl http://127.0.0.1:8010/agents
+
+# Senkron çağrı
+curl -X POST http://127.0.0.1:8010/agents/copywriter/run \
+  -H "X-Client-Id: akme-tekstil" -H "Content-Type: application/json" \
+  -d '{"title":"...","content":"...","max_tokens":600}'
+
+# Async dispatch
+curl -X POST http://127.0.0.1:8010/agents/social_media/dispatch \
+  -H "X-Client-Id: akme-tekstil" -H "Content-Type: application/json" \
+  -d '{"title":"...","content":"..."}'
+
+# Task durumu
+curl http://127.0.0.1:8010/tasks/<task_id>
+
+# Telemetry
+curl http://127.0.0.1:8010/stats/usage?hours=24
+curl http://127.0.0.1:8010/stats/limits
 ```
 
-Bunların hepsi yeşil dönerse AŞAMA 3'e güvenle başlanabilir.
+---
+
+## 5. Bilinen Sınırlamalar / Notlar
+
+- **Ollama**: `host.docker.internal:11434` üzerinden erişiliyor; container içi DNS düzgün ayarlanmış (`extra_hosts`).
+- **Multi-stage Dockerfile**: Şu an single-stage (transitive dep sorunları nedeniyle); optimize edilebilir.
+- **Account Manager geriye dönük endpoint**: `/brief` hâlâ çalışır (Asama 2 demo), `/agents/account_manager/run` ile aynı işi yapar.
+- **Account Manager logs hatası**: PowerShell `return` döngüden çıkamıyor — sadece test scriptinde, ürünü etkilemez.
+- **`logs/test-*.json`**: gitignored olmamalı (test scriptleri kullanıyor); şu an logs/ dizini gitignore'da, sorun çıkarsa dosyaları repo'ya alacağız.
+
+---
+
+## 6. Sonraki Adım: AŞAMA 4 — Obsidian Vault + Drive Sync
+
+Berat Bey'in onayıyla başlanacak görevler:
+
+### 4.A — Vault iskeleti & MCP entegrasyonu
+- `vaults/<client_id>/` (D:\Google_Drive\AjansKlasoru altında)
+- Obsidian klasör yapısı: `00-Inbox`, `01-Brief`, `02-Strateji`, `03-Copy`, `04-Sosyal`, `05-SEO`, `06-Gorsel`, `07-Veri`, `08-Bütçe`, `09-Yayın`, `99-Arsiv`
+- `new-client.ps1`: yeni müşteri için Vault oluştur (şablondan)
+
+### 4.B — Vault okuma/yazma CrewAI tool'u
+- `agency/src/crew/tools/obsidian_vault.py`: read_note, write_note, list_notes, search_notes
+- Tüm 12 ajan bu tool'u kullanabilir
+
+### 4.C — Embedder & pgvector hybrid search
+- Watcher (watchdog) Vault'ta değişiklik takip eder
+- Yeni/değişen notları embed eder (Gemini → fallback bge-m3) ve `agency.note_embeddings` tablosuna yazar
+- Hybrid search: BM25 (`pg_trgm`) + dense vector (cosine)
+
+### 4.D — Drive senkron sağlığı
+- Vault klasörünün Drive ile sync olduğunu doğrulamak için heartbeat dosyası
+- `doctor.ps1`'a yeni check
+
+### Tahmini efor
+~400 satır kod + ~50 satır SQL + 5-6 endpoint + tool entegrasyonu. 60-90 dakika.
+
+---
+
+## 7. Bir Sonraki Sohbete Geçerken
+
+Bu dosya kaldığımız yerin tam haritasıdır. Yeni bir sohbet açtığında:
+
+1. Bu dosyayı oku (`docs/PROJE-DURUMU.md`)
+2. `git log --oneline -10` → son commitleri gör
+3. `.\scripts\doctor.ps1` → canlı sistem durumu
+4. `curl http://127.0.0.1:8010/agents` → 12 ajan yaşıyor mu doğrula
+5. Berat Bey'den AŞAMA 4 onayı al, başla
