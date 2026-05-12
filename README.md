@@ -52,7 +52,7 @@ curl -X POST http://127.0.0.1:8010/brief `
 | **5** | **Langfuse v3 self-hosted, LiteLLM OTEL callback, Guardrails (circuit breaker + token budget)** | **✅** | **`87cfb3a`** |
 | **6** | **MCP Gateway + Postiz + CrewAI Flows** | **✅** | **`fd27652`** |
 | **7** | **CRM & Fatura Servisi (Postgres + ReportLab PDF + CrewAI Tools)** | **✅** | **`PENDING`** |
-| 8 | Flowise UI (webhook tetikleyici) | ⏳ | - |
+| **8** | **Flowise UI (docker-compose ui profili + Custom Tool Entegrasyonu)** | **✅** | **`PENDING`** |
 | 9 | Dokümantasyon | ⏳ | - |
 | 10 | E2E Test (3 senaryo) | ⏳ | - |
 | 11 | Final Review | ⏳ | - |

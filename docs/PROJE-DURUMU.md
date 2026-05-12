@@ -99,8 +99,9 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 | `adagency-postiz` | **5000** | social | ✅ | 6 |
 | `adagency-mcp-gateway` | **8811** | mcp | ✅ | 6 |
 | `adagency-temporal` (ve bilesenleri) | - | social | ✅ | 6 |
+| `adagency-flowise` | **3000** | ui | ✅ | 8 |
 
-Bekleyen: CRM (7), Flowise (8).
+Bekleyen: Dokümantasyon (9), E2E Test (10), Final (11).
 
 ---
 
@@ -183,11 +184,17 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 - **REST:** `/crm/clients`, `/crm/proposals`, `/crm/invoices` endpoint'leri çalışır durumda.
 - **CrewAI Tools:** Ajanların CRM'den bilgi çekmesi ve yazması için `GetClientInfo`, `CreateProposal`, `GenerateInvoice` tool'ları eklendi.
 
-## 6. Sonraki Adım: AŞAMA 8 — Flowise UI (Webhook Tetikleyici)
+### ✅ AŞAMA 8 — Flowise UI (v0.7.0)
 
-- Flowise ile görsel bir kullanıcı arayüzü kurulması
-- API'yi Flowise node'ları / webhook'ları ile bağlayıp kullanıcıdan brief alarak süreci başlatma
-- Flowise flow'larını export edip projeye ekleme
+- **Docker:** `docker-compose.yml` içerisine `ui` profili ile Flowise container'ı eklendi (Port: 3000).
+- **Network:** Flowise'ın Docker iç network üzerinden (`http://adagency-api:8000`) API ile konuşması için gerekli konfigürasyon yapıldı.
+- **Entegrasyon Rehberi:** `docs/flowise_templates/README.md` dosyası oluşturuldu. İçerisinde Custom Tool (JavaScript) ve Webhook tabanlı tetikleyici tanımları yer alıyor.
+
+## 6. Sonraki Adım: AŞAMA 9 — Dokümantasyon
+
+- Sistem mimarisinin, tüm endpoint'lerin ve entegrasyonların son bir kez belgelenmesi
+- Kurulum rehberinin güncellenmesi
+- Ajan prompt şablonlarının markdown formatında bir klasörde toplanması
 
 ---
 

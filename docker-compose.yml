@@ -1,28 +1,8 @@
-# =================================================================
-# CrewAI Multi-Agent Reklam Ajansi - Docker Compose
-# =================================================================
-# Asamali acilis - her servis kendi profili icinde:
-#   core    : postgres + redis (Asama 1 - SU AN AKTIF)
-#   agents  : agency-api + workers (Asama 2-3)
-#   memory  : obsidian-mcp + vault-watcher (Asama 4)
-#   ui      : flowise + crm-service (Asama 7-8)
-#   social  : postiz (Asama 6)
-#   obs     : langfuse + langfuse-db (Asama 5)
-#   mcp     : mcp-gateway (Asama 6)
-#
-# Calistirma:
-#   docker compose --profile core up -d
-#   docker compose --profile core --profile agents up -d
-#   docker compose --profile "*" up -d        # tum sistem
-# =================================================================
-
 name: adagency
-
 networks:
   agency_net:
     name: agency_net
     driver: bridge
-
 volumes:
   postgres_data:
     name: adagency_postgres_data
@@ -50,63 +30,70 @@ volumes:
     name: adagency_temporal_postgres_data
   temporal_es_data:
     name: adagency_temporal_es_data
-
+  flowise_data:
+    name: adagency_flowise_data
 services:
-
-  # ===============================================================
-  # CORE PROFILE (Asama 1)
-  # ===============================================================
-
   postgres:
     image: pgvector/pgvector:pg16
     container_name: adagency-postgres
     restart: unless-stopped
-    profiles: [core, agents, memory, ui, social, obs]
+    profiles:
+    - core
+    - agents
+    - memory
+    - ui
+    - social
+    - obs
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+      POSTGRES_INITDB_ARGS: --encoding=UTF-8 --locale=C
       TZ: ${TZ}
       PGTZ: ${TZ}
     ports:
-      - "127.0.0.1:5432:5432"
+    - 127.0.0.1:5432:5432
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/sql/init:/docker-entrypoint-initdb.d:ro
+    - postgres_data:/var/lib/postgresql/data
+    - ./scripts/sql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -q"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -q
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 1g
-
   redis:
     image: redis:7-alpine
     container_name: adagency-redis
     restart: unless-stopped
-    profiles: [core, agents, memory, ui, social, obs]
-    command: >
-      redis-server
-      --requirepass ${REDIS_PASSWORD}
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-      --save 60 1000
-      --appendonly yes
-      --appendfsync everysec
-      --tcp-keepalive 60
+    profiles:
+    - core
+    - agents
+    - memory
+    - ui
+    - social
+    - obs
+    command: 'redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy
+      allkeys-lru --save 60 1000 --appendonly yes --appendfsync everysec --tcp-keepalive
+      60
+
+      '
     ports:
-      - "127.0.0.1:6379:6379"
+    - 127.0.0.1:6379:6379
     volumes:
-      - redis_data:/data
+    - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep -q PONG"]
+      test:
+      - CMD-SHELL
+      - redis-cli -a $$REDIS_PASSWORD ping | grep -q PONG
       interval: 10s
       timeout: 5s
       retries: 10
@@ -115,16 +102,11 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       TZ: ${TZ}
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 640m
-
-  # ===============================================================
-  # AGENTS PROFILE (Asama 2-3)
-  # ===============================================================
-
   agency-api:
     build:
       context: ./agency
@@ -132,36 +114,41 @@ services:
     image: adagency/agency-api:0.4.0
     container_name: adagency-api
     restart: unless-stopped
-    profiles: [agents]
+    profiles:
+    - agents
     env_file:
-      - .env
+    - .env
     environment:
       UVICORN_WORKERS: ${UVICORN_WORKERS:-3}
       TZ: ${TZ}
     ports:
-      - "127.0.0.1:${AGENCY_API_PORT:-8010}:8000"
+    - 127.0.0.1:${AGENCY_API_PORT:-8010}:8000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+    - host.docker.internal:host-gateway
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3); sys.exit(0 if r.status==200 else 1)"]
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/healthz',
+        timeout=3); sys.exit(0 if r.status==200 else 1)
       interval: 15s
       timeout: 5s
       retries: 6
       start_period: 30s
     volumes:
-      - ${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults:rw
+    - ${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults:rw
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 2g
-
   agency-worker:
     image: adagency/agency-api:0.4.0
     build:
@@ -169,61 +156,48 @@ services:
       dockerfile: Dockerfile
     container_name: adagency-worker
     restart: unless-stopped
-    profiles: [agents]
+    profiles:
+    - agents
     env_file:
-      - .env
+    - .env
     environment:
       TZ: ${TZ}
-      CELERY_WORKER: "true"
+      CELERY_WORKER: 'true'
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+    - host.docker.internal:host-gateway
     volumes:
-      - ${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults:rw
+    - ${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults:rw
     command:
-      - sh
-      - -c
-      - "celery -A src.workers.celery_app worker --loglevel=info --queues=q_heavy,q_fast,q_io,q_research --concurrency=2 --max-tasks-per-child=200 --hostname=worker@%h"
+    - sh
+    - -c
+    - celery -A src.workers.celery_app worker --loglevel=info --queues=q_heavy,q_fast,q_io,q_research
+      --concurrency=2 --max-tasks-per-child=200 --hostname=worker@%h
     healthcheck:
-      test: ["CMD-SHELL", "celery -A src.workers.celery_app inspect ping -d worker@$$HOSTNAME | grep -q pong"]
+      test:
+      - CMD-SHELL
+      - celery -A src.workers.celery_app inspect ping -d worker@$$HOSTNAME | grep
+        -q pong
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 45s
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 2g
-
-  # ===============================================================
-  # MEMORY PROFILE (Asama 4) - PLACEHOLDER
-  # ===============================================================
-  # obsidian-mcp:
-  #   image: obsidian-mcp:rust-latest
-  #   ...
-
-  # ===============================================================
-  # UI PROFILE (Asama 7-8) - PLACEHOLDER
-  # ===============================================================
-  # flowise:
-  #   image: flowiseai/flowise:3.1.2
-  #   ...
-
-  # ===============================================================
-  # OBS PROFILE (Asama 5) — Langfuse v3 self-hosted
-  # ===============================================================
-
   langfuse-web:
     image: docker.io/langfuse/langfuse:3
     container_name: adagency-langfuse-web
     restart: unless-stopped
-    profiles: [obs]
+    profiles:
+    - obs
     depends_on:
       langfuse-postgres:
         condition: service_healthy
@@ -234,39 +208,38 @@ services:
       langfuse-minio:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${LANGFUSE_PORT:-3001}:3000"
-    environment: &langfuse-env
-      NEXTAUTH_URL: "http://localhost:${LANGFUSE_PORT:-3001}"
+    - 127.0.0.1:${LANGFUSE_PORT:-3001}:3000
+    environment:
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3001}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-nextauth}
-      DATABASE_URL: "postgresql://langfuse:${LANGFUSE_PG_PASSWORD:-changeme-lfpg}@langfuse-postgres:5432/langfuse"
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD:-changeme-lfpg}@langfuse-postgres:5432/langfuse
       SALT: ${LANGFUSE_SALT:-changeme-salt}
       ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
-      TELEMETRY_ENABLED: "false"
-      CLICKHOUSE_MIGRATION_URL: "clickhouse://langfuse-clickhouse:9000"
-      CLICKHOUSE_URL: "http://langfuse-clickhouse:8123"
+      TELEMETRY_ENABLED: 'false'
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: ${LANGFUSE_CH_PASSWORD:-changeme-ch}
-      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
       LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
-      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "events/"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
       LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
       LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
       LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
       LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
-      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
-      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
-      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "media/"
-      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: 'false'
       REDIS_HOST: langfuse-redis
-      REDIS_PORT: "6379"
+      REDIS_PORT: '6379'
       REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
-      REDIS_TLS_ENABLED: "false"
-      # Headless init
+      REDIS_TLS_ENABLED: 'false'
       LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-ad-agency}
       LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Ad Agency}
       LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-main}
@@ -279,23 +252,26 @@ services:
       TZ: UTC
       PGTZ: UTC
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://$(hostname):3000/api/public/health || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget --no-verbose --tries=1 --spider http://$(hostname):3000/api/public/health
+        || exit 1
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 60s
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 1g
-
   langfuse-worker:
     image: docker.io/langfuse/langfuse-worker:3
     container_name: adagency-langfuse-worker
     restart: unless-stopped
-    profiles: [obs]
+    profiles:
+    - obs
     depends_on:
       langfuse-postgres:
         condition: service_healthy
@@ -306,19 +282,59 @@ services:
       langfuse-minio:
         condition: service_healthy
     environment:
-      <<: *langfuse-env
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3001}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-nextauth}
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD:-changeme-lfpg}@langfuse-postgres:5432/langfuse
+      SALT: ${LANGFUSE_SALT:-changeme-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      TELEMETRY_ENABLED: 'false'
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CH_PASSWORD:-changeme-ch}
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: 'false'
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: '6379'
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
+      REDIS_TLS_ENABLED: 'false'
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-ad-agency}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Ad Agency}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-main}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-Main}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-local}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-local-changeme}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@agency.local}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-changeme-lfpass}
+      TZ: UTC
+      PGTZ: UTC
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 1g
-
   langfuse-postgres:
     image: postgres:17-alpine
     container_name: adagency-langfuse-postgres
     restart: unless-stopped
-    profiles: [obs]
+    profiles:
+    - obs
     environment:
       POSTGRES_USER: langfuse
       POSTGRES_PASSWORD: ${LANGFUSE_PG_PASSWORD:-changeme-lfpg}
@@ -326,36 +342,38 @@ services:
       TZ: UTC
       PGTZ: UTC
     volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
+    - langfuse_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse -q"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U langfuse -d langfuse -q
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 20s
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 512m
-
   langfuse-redis:
     image: redis:7-alpine
     container_name: adagency-langfuse-redis
     restart: unless-stopped
-    profiles: [obs]
-    command: >
-      redis-server
-      --requirepass ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
-      --maxmemory 256mb
-      --maxmemory-policy noeviction
-      --save 60 1000
-      --appendonly yes
+    profiles:
+    - obs
+    command: 'redis-server --requirepass ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
+      --maxmemory 256mb --maxmemory-policy noeviction --save 60 1000 --appendonly
+      yes
+
+      '
     volumes:
-      - langfuse_redis_data:/data
+    - langfuse_redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_AUTH ping | grep -q PONG"]
+      test:
+      - CMD-SHELL
+      - redis-cli -a $$REDIS_AUTH ping | grep -q PONG
       interval: 10s
       timeout: 5s
       retries: 10
@@ -363,197 +381,224 @@ services:
     environment:
       REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 384m
-
   langfuse-clickhouse:
     image: docker.io/clickhouse/clickhouse-server
     container_name: adagency-langfuse-clickhouse
     restart: unless-stopped
-    profiles: [obs]
-    user: "101:101"
+    profiles:
+    - obs
+    user: 101:101
     environment:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: ${LANGFUSE_CH_PASSWORD:-changeme-ch}
     volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    - langfuse_clickhouse_data:/var/lib/clickhouse
+    - langfuse_clickhouse_logs:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 1g
-
   langfuse-minio:
     image: cgr.dev/chainguard/minio
     container_name: adagency-langfuse-minio
     restart: unless-stopped
-    profiles: [obs]
+    profiles:
+    - obs
     entrypoint: sh
-    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address
+      ":9001" /data'
     environment:
       MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
     volumes:
-      - langfuse_minio_data:/data
+    - langfuse_minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test:
+      - CMD
+      - mc
+      - ready
+      - local
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 5s
     networks:
-      - agency_net
+    - agency_net
     deploy:
       resources:
         limits:
           memory: 512m
-  # ===============================================================
-  # SOCIAL PROFILE (Asama 6) - Postiz & Temporal Stack
-  # ===============================================================
   postiz:
     image: ghcr.io/gitroomhq/postiz-app:latest
     container_name: adagency-postiz
     restart: unless-stopped
-    profiles: [social]
+    profiles:
+    - social
     environment:
-      - MAIN_URL=http://localhost:5000
-      - FRONTEND_URL=http://localhost:5000
-      - NEXT_PUBLIC_BACKEND_URL=http://localhost:5000/api
-      - JWT_SECRET=super_secret_jwt_key_agency
-      - DATABASE_URL=postgresql://postiz:postizpass@postiz-postgres:5432/postiz
-      - REDIS_URL=redis://postiz-redis:6379
-      - BACKEND_INTERNAL_URL=http://localhost:3000
-      - TEMPORAL_ADDRESS=temporal:7233
-      - IS_GENERAL=true
-      - DISABLE_REGISTRATION=false
-      - RUN_CRON=true
-      - STORAGE_PROVIDER=local
-      - UPLOAD_DIRECTORY=/uploads
-      - NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads
+    - MAIN_URL=http://localhost:5000
+    - FRONTEND_URL=http://localhost:5000
+    - NEXT_PUBLIC_BACKEND_URL=http://localhost:5000/api
+    - JWT_SECRET=super_secret_jwt_key_agency
+    - DATABASE_URL=postgresql://postiz:postizpass@postiz-postgres:5432/postiz
+    - REDIS_URL=redis://postiz-redis:6379
+    - BACKEND_INTERNAL_URL=http://localhost:3000
+    - TEMPORAL_ADDRESS=temporal:7233
+    - IS_GENERAL=true
+    - DISABLE_REGISTRATION=false
+    - RUN_CRON=true
+    - STORAGE_PROVIDER=local
+    - UPLOAD_DIRECTORY=/uploads
+    - NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads
     volumes:
-      - postiz_config:/config/
-      - postiz_uploads:/uploads/
+    - postiz_config:/config/
+    - postiz_uploads:/uploads/
     ports:
-      - "5000:5000"
+    - 5000:5000
     networks:
-      - agency_net
+    - agency_net
     depends_on:
       postiz-postgres:
         condition: service_healthy
       postiz-redis:
         condition: service_healthy
-
   postiz-postgres:
     image: postgres:16-alpine
     container_name: adagency-postiz-postgres
     restart: unless-stopped
-    profiles: [social]
+    profiles:
+    - social
     environment:
-      - POSTGRES_USER=postiz
-      - POSTGRES_PASSWORD=postizpass
-      - POSTGRES_DB=postiz
+    - POSTGRES_USER=postiz
+    - POSTGRES_PASSWORD=postizpass
+    - POSTGRES_DB=postiz
     volumes:
-      - postiz_postgres_data:/var/lib/postgresql/data
+    - postiz_postgres_data:/var/lib/postgresql/data
     networks:
-      - agency_net
+    - agency_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postiz -d postiz"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U postiz -d postiz
       interval: 10s
       timeout: 5s
       retries: 5
-
   postiz-redis:
     image: redis:7.2
     container_name: adagency-postiz-redis
     restart: unless-stopped
-    profiles: [social]
+    profiles:
+    - social
     volumes:
-      - postiz_redis_data:/data
+    - postiz_redis_data:/data
     networks:
-      - agency_net
+    - agency_net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+      - CMD
+      - redis-cli
+      - ping
       interval: 10s
       timeout: 5s
       retries: 5
-
   temporal-elasticsearch:
     image: elasticsearch:7.17.27
     container_name: adagency-temporal-es
-    profiles: [social]
+    profiles:
+    - social
     environment:
-      - cluster.routing.allocation.disk.threshold_enabled=true
-      - cluster.routing.allocation.disk.watermark.low=512mb
-      - cluster.routing.allocation.disk.watermark.high=256mb
-      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
-      - discovery.type=single-node
-      - ES_JAVA_OPTS=-Xms256m -Xmx256m
-      - xpack.security.enabled=false
+    - cluster.routing.allocation.disk.threshold_enabled=true
+    - cluster.routing.allocation.disk.watermark.low=512mb
+    - cluster.routing.allocation.disk.watermark.high=256mb
+    - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+    - discovery.type=single-node
+    - ES_JAVA_OPTS=-Xms256m -Xmx256m
+    - xpack.security.enabled=false
     networks:
-      - agency_net
+    - agency_net
     volumes:
-      - temporal_es_data:/var/lib/elasticsearch/data
-
+    - temporal_es_data:/var/lib/elasticsearch/data
   temporal-postgresql:
     image: postgres:16
     container_name: adagency-temporal-postgres
-    profiles: [social]
+    profiles:
+    - social
     environment:
-      - POSTGRES_PASSWORD=temporal
-      - POSTGRES_USER=temporal
+    - POSTGRES_PASSWORD=temporal
+    - POSTGRES_USER=temporal
     networks:
-      - agency_net
+    - agency_net
     volumes:
-      - temporal_postgres_data:/var/lib/postgresql/data
-
+    - temporal_postgres_data:/var/lib/postgresql/data
   temporal:
     image: temporalio/auto-setup:1.28.1
     container_name: adagency-temporal
-    profiles: [social]
+    profiles:
+    - social
     depends_on:
-      - temporal-postgresql
-      - temporal-elasticsearch
+    - temporal-postgresql
+    - temporal-elasticsearch
     environment:
-      - DB=postgres12
-      - DB_PORT=5432
-      - POSTGRES_USER=temporal
-      - POSTGRES_PWD=temporal
-      - POSTGRES_SEEDS=temporal-postgresql
-      - ENABLE_ES=true
-      - ES_SEEDS=temporal-elasticsearch
-      - ES_VERSION=v7
-      - TEMPORAL_NAMESPACE=default
+    - DB=postgres12
+    - DB_PORT=5432
+    - POSTGRES_USER=temporal
+    - POSTGRES_PWD=temporal
+    - POSTGRES_SEEDS=temporal-postgresql
+    - ENABLE_ES=true
+    - ES_SEEDS=temporal-elasticsearch
+    - ES_VERSION=v7
+    - TEMPORAL_NAMESPACE=default
     networks:
-      - agency_net
-
-  # ===============================================================
-  # MCP PROFILE (Asama 6) - MCP Gateway
-  # ===============================================================
+    - agency_net
   mcp-gateway:
-    build: 
+    build:
       context: ./agency
       dockerfile: Dockerfile.mcp
     container_name: adagency-mcp-gateway
     restart: unless-stopped
-    profiles: [mcp]
+    profiles:
+    - mcp
     environment:
-      - PORT=8811
-      - POSTIZ_URL=http://postiz:5000
+    - PORT=8811
+    - POSTIZ_URL=http://postiz:5000
     ports:
-      - "8811:8811"
+    - 8811:8811
     networks:
-      - agency_net
+    - agency_net
     depends_on:
-      - postiz
+    - postiz
+  flowise:
+    image: flowiseai/flowise:latest
+    container_name: adagency-flowise
+    restart: unless-stopped
+    profiles:
+    - ui
+    environment:
+    - PORT=3000
+    - FLOWISE_USERNAME=admin
+    - FLOWISE_PASSWORD=admin
+    - DATABASE_PATH=/root/.flowise
+    - APIKEY_PATH=/root/.flowise
+    - SECRETKEY_PATH=/root/.flowise
+    - LOG_PATH=/root/.flowise/logs
+    ports:
+    - 3000:3000
+    volumes:
+    - flowise_data:/root/.flowise
+    networks:
+    - agency_net
