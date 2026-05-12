@@ -1,0 +1,1 @@
+"""Observability modulu — Langfuse entegrasyonu."""

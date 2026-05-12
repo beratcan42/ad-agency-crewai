@@ -1,9 +1,12 @@
 """Hibrit model router — 4 katmanli fallback + Redis rate limit + Postgres telemetry.
 
-Asama 3.D:
+Asama 3.D + 5:
   - Redis rolling-window rate limiter (RPM/RPD) ile proactive fallback
+  - Circuit breaker (provider bazli ardisik hata takibi)
+  - Langfuse trace metadata (LiteLLM callback uzerinden)
+  - Token butcesi kaydı (basarili cagri sonrasi)
   - Postgres agency.usage_logs tablosuna fire-and-forget insert (her cagri)
-  - Hata tiplerini ayrik isaretle: success | fallback | error | skip_ratelimit
+  - Hata tiplerini ayrik isaretle: success | fallback | error | skip_ratelimit | skip_circuit
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ from litellm.exceptions import APIConnectionError, RateLimitError, Timeout
 
 from ..config.loader import get_agent_chain, get_provider_config
 from ..config.settings import settings
+from ..guardrails.circuit_breaker import is_allowed as cb_is_allowed, record_failure as cb_record_failure, record_success as cb_record_success
+from ..observability.langfuse_integration import build_langfuse_metadata
 from .rate_limiter import get_rate_limiter
 from .telemetry import log_usage
 
@@ -137,13 +142,32 @@ class ModelRouter:
                 )
                 continue
 
-            # 2) LiteLLM cagri
+            # 1b) Circuit breaker check
+            cb_ok, cb_reason = await cb_is_allowed(provider, model)
+            if not cb_ok:
+                log.warning(
+                    "router.skip_circuit",
+                    extra={"agent": self.agent_id, "provider": provider, "model": model, "reason": cb_reason},
+                )
+                await log_usage(
+                    client_id=client_id, agent_id=self.agent_id, provider=provider, model=model,
+                    chain_idx=idx, status="skip_circuit", error_class="CircuitOpen",
+                    error_msg=cb_reason,
+                )
+                continue
+
+            # 2) LiteLLM cagri (+ Langfuse metadata)
+            lf_meta = build_langfuse_metadata(
+                agent_id=self.agent_id, client_id=client_id,
+                provider=provider, model=model, chain_idx=idx,
+            )
             t0 = time.perf_counter()
             try:
                 response = await litellm.acompletion(
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    metadata=lf_meta if lf_meta else None,
                     **params,
                 )
                 latency_ms = int((time.perf_counter() - t0) * 1000)
@@ -174,6 +198,16 @@ class ModelRouter:
                     latency_ms=latency_ms,
                 )
                 await rl.record_call(provider, model)
+                await cb_record_success(provider, model)
+
+                # Token butcesi kaydı
+                total_tok = usage.get("total_tokens") or 0
+                if total_tok > 0:
+                    try:
+                        from ..guardrails.token_budget import record_usage as budget_record
+                        await budget_record(client_id, total_tok)
+                    except Exception:
+                        pass  # fire-and-forget
 
                 log.info(
                     "router.success",
@@ -199,6 +233,7 @@ class ModelRouter:
                     chain_idx=idx, status="fallback", latency_ms=latency_ms,
                     error_class=type(e).__name__, error_msg=str(e)[:500],
                 )
+                await cb_record_failure(provider, model)
                 last_error = e
                 continue
             except Exception as e:
@@ -212,6 +247,7 @@ class ModelRouter:
                     chain_idx=idx, status="fallback", latency_ms=latency_ms,
                     error_class=type(e).__name__, error_msg=str(e)[:500],
                 )
+                await cb_record_failure(provider, model)
                 last_error = e
                 continue
 

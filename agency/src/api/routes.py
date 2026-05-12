@@ -408,3 +408,31 @@ async def stats_limits() -> dict[str, Any]:
         "soft_limits": {"rpm_pct_trigger": 0.85, "rpd_pct_trigger": 0.90},
         "items": snapshot,
     }
+
+
+# --- Asama 5: Budget + Langfuse endpoints -----------------------
+
+
+@router.get("/stats/budget", tags=["stats"])
+async def stats_budget(
+    client_id: str = Depends(require_client_id),
+) -> dict[str, Any]:
+    """Müşterinin token bütçesi durumunu döndürür."""
+    from ..guardrails.token_budget import get_budget_status
+
+    return await get_budget_status(client_id)
+
+
+@router.get("/stats/langfuse", tags=["stats"])
+async def stats_langfuse() -> dict[str, Any]:
+    """Langfuse bağlantı durumunu döndürür (X-Client-Id gerekmez)."""
+    from ..config.settings import settings
+    from ..observability.langfuse_integration import _initialized, _langfuse_available
+
+    return {
+        "enabled": settings.LANGFUSE_ENABLED,
+        "host": settings.LANGFUSE_HOST or "(tanımsız)",
+        "available": _langfuse_available(),
+        "callback_active": _initialized,
+    }
+

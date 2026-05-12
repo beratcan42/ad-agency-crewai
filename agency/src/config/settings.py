@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 3
     CIRCUIT_BREAKER_TIMEOUT_SEC: int = 300
 
+    # Langfuse (Asama 5)
+    LANGFUSE_HOST: str = ""
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_ENABLED: bool = True
+
     @property
     def app_root(self) -> Path:
         return Path(__file__).resolve().parents[2]

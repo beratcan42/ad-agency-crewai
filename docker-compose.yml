@@ -28,6 +28,16 @@ volumes:
     name: adagency_postgres_data
   redis_data:
     name: adagency_redis_data
+  langfuse_postgres_data:
+    name: adagency_langfuse_postgres_data
+  langfuse_redis_data:
+    name: adagency_langfuse_redis_data
+  langfuse_clickhouse_data:
+    name: adagency_langfuse_clickhouse_data
+  langfuse_clickhouse_logs:
+    name: adagency_langfuse_clickhouse_logs
+  langfuse_minio_data:
+    name: adagency_langfuse_minio_data
 
 services:
 
@@ -107,7 +117,7 @@ services:
     build:
       context: ./agency
       dockerfile: Dockerfile
-    image: adagency/agency-api:0.3.0
+    image: adagency/agency-api:0.4.0
     container_name: adagency-api
     restart: unless-stopped
     profiles: [agents]
@@ -141,7 +151,7 @@ services:
           memory: 2g
 
   agency-worker:
-    image: adagency/agency-api:0.3.0
+    image: adagency/agency-api:0.4.0
     build:
       context: ./agency
       dockerfile: Dockerfile
@@ -192,3 +202,208 @@ services:
   # flowise:
   #   image: flowiseai/flowise:3.1.2
   #   ...
+
+  # ===============================================================
+  # OBS PROFILE (Asama 5) — Langfuse v3 self-hosted
+  # ===============================================================
+
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3
+    container_name: adagency-langfuse-web
+    restart: unless-stopped
+    profiles: [obs]
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LANGFUSE_PORT:-3001}:3000"
+    environment: &langfuse-env
+      NEXTAUTH_URL: "http://localhost:${LANGFUSE_PORT:-3001}"
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-nextauth}
+      DATABASE_URL: "postgresql://langfuse:${LANGFUSE_PG_PASSWORD:-changeme-lfpg}@langfuse-postgres:5432/langfuse"
+      SALT: ${LANGFUSE_SALT:-changeme-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: "clickhouse://langfuse-clickhouse:9000"
+      CLICKHOUSE_URL: "http://langfuse-clickhouse:8123"
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CH_PASSWORD:-changeme-ch}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "events/"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "media/"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
+      REDIS_TLS_ENABLED: "false"
+      # Headless init
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-ad-agency}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Ad Agency}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-main}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-Main}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-local}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-local-changeme}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@agency.local}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-changeme-lfpass}
+      TZ: UTC
+      PGTZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://$(hostname):3000/api/public/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    container_name: adagency-langfuse-worker
+    restart: unless-stopped
+    profiles: [obs]
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    environment:
+      <<: *langfuse-env
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  langfuse-postgres:
+    image: postgres:17-alpine
+    container_name: adagency-langfuse-postgres
+    restart: unless-stopped
+    profiles: [obs]
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_PG_PASSWORD:-changeme-lfpg}
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: adagency-langfuse-redis
+    restart: unless-stopped
+    profiles: [obs]
+    command: >
+      redis-server
+      --requirepass ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+      --save 60 1000
+      --appendonly yes
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_AUTH ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    environment:
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-changeme-lfredis}
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+  langfuse-clickhouse:
+    image: docker.io/clickhouse/clickhouse-server
+    container_name: adagency-langfuse-clickhouse
+    restart: unless-stopped
+    profiles: [obs]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CH_PASSWORD:-changeme-ch}
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    container_name: adagency-langfuse-minio
+    restart: unless-stopped
+    profiles: [obs]
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-changeme-minio}
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - agency_net
+    deploy:
+      resources:
+        limits:
+          memory: 512m

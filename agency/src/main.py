@@ -1,4 +1,4 @@
-"""FastAPI giriş noktası — Aşama 2 minimal app."""
+"""FastAPI giriş noktası — Aşama 2+5 app."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from . import __version__
 from .api import api_router
 from .config.settings import settings
 from .middleware.client_context import ClientContextMiddleware
+from .middleware.token_budget import TokenBudgetMiddleware
 
 # --- Logging -------------------------------------------------------
 
@@ -34,6 +35,14 @@ log = logging.getLogger("agency")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("agency.startup version=%s env=%s", __version__, settings.ENV)
+
+    # Langfuse callback init (Asama 5)
+    try:
+        from .observability.langfuse_integration import init_langfuse_callbacks
+        init_langfuse_callbacks()
+    except Exception as e:
+        log.warning("langfuse.init.skip: %s", e)
+
     poller_task: asyncio.Task | None = None
     if settings.VAULT_WATCHER_ENABLED:
         from .vault.poller import vault_poller_loop
@@ -59,7 +68,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Middleware
+# Middleware (sira onemli: once client context, sonra budget)
+app.add_middleware(TokenBudgetMiddleware)
 app.add_middleware(ClientContextMiddleware)
 
 # Routes

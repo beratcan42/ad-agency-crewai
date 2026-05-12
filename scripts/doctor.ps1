@@ -131,7 +131,10 @@ $containers = @(
     @{ Name='adagency-worker';   Port=0;    Service='Celery Worker (Asama 2)' }
     @{ Name='adagency-flowise';  Port=3000; Service='Flowise (Asama 8)' }
     @{ Name='adagency-postiz';   Port=5000; Service='Postiz (Asama 6)' }
-    @{ Name='adagency-langfuse'; Port=3001; Service='Langfuse (Asama 5)' }
+    @{ Name='adagency-langfuse-web';      Port=3001; Service='Langfuse Web (Asama 5)' }
+    @{ Name='adagency-langfuse-worker';   Port=0;    Service='Langfuse Worker (Asama 5)' }
+    @{ Name='adagency-langfuse-clickhouse'; Port=0;  Service='Langfuse ClickHouse (Asama 5)' }
+    @{ Name='adagency-langfuse-minio';    Port=0;    Service='Langfuse MinIO (Asama 5)' }
 )
 
 foreach ($c in $containers) {
@@ -196,6 +199,14 @@ if ($pgRunning -eq 'healthy') {
         Write-Status "agency.note_embeddings" "OK" "tablo var ($($embRows.Trim()) chunk)"
     } else {
         Write-Status "agency.note_embeddings" "WARN" "tablo yok (Asama 4: 03-note-embeddings.sql apply)"
+    }
+
+    $budgetTbl = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='agency' AND tablename='token_budgets';" 2>$null
+    if ($budgetTbl -and ($budgetTbl.Trim() -eq '1')) {
+        $budgetRows = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM agency.token_budgets;" 2>$null
+        Write-Status "agency.token_budgets" "OK" "tablo var ($($budgetRows.Trim()) row)"
+    } else {
+        Write-Status "agency.token_budgets" "WARN" "tablo yok (Asama 5: 04-token-budgets.sql apply)"
     }
 }
 
@@ -271,6 +282,18 @@ if ($apiRunning -eq 'healthy') {
             Write-Status "Vault mount (/vaults)" "WARN" "bos veya erisim yok; compose volume + VAULT_BASE_PATH_HOST kontrol et"
         }
     } catch { Write-Status "/vault/status" "FAIL" $_.Exception.Message }
+
+    # Asama 5: Langfuse baglanti + budget
+    try {
+        $lf = Invoke-RestMethod -Uri "http://127.0.0.1:8010/stats/langfuse" -TimeoutSec 5
+        if ($lf.callback_active) {
+            Write-Status "Langfuse callback" "OK" "aktif, host=$($lf.host)"
+        } elseif ($lf.available) {
+            Write-Status "Langfuse callback" "WARN" "mevcut ama init edilmemis"
+        } else {
+            Write-Status "Langfuse callback" "INFO" "devre disi (LANGFUSE_HOST bos veya Langfuse kapal)"
+        }
+    } catch { Write-Status "/stats/langfuse" "WARN" $_.Exception.Message }
 }
 
 # --- Celery worker detay -----------------------------------------

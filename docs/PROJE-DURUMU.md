@@ -1,10 +1,10 @@
 # Proje Durumu — Kaldığımız Yer Rehberi
 
-**Son Güncelleme:** 12 Mayıs 2026, 23:45 (UTC+3)
+**Son Güncelleme:** 13 Mayıs 2026, 00:15 (UTC+3)
 **Aktif Branch:** `main`
 **GitHub:** [`beratcan42/ad-agency-crewai`](https://github.com/beratcan42/ad-agency-crewai) (private)
-**API Sürüm:** `0.3.0`
-**Son Commit:** AŞAMA 4 tamamlandı (Vault + watcher + hybrid arama; `git log -1`)
+**API Sürüm:** `0.4.0`
+**Son Commit:** AŞAMA 5 tamamlandı (Langfuse + guardrails + token bütçesi; `git log -1`)
 
 ---
 
@@ -41,15 +41,6 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 | **3.D** | Redis rolling window rate limiter (RPM/RPD) + Postgres `agency.usage_logs` telemetry + proactive fallback (%85 RPM, %90 RPD eşik). | `66dbb16` |
 | **3.E** | `/agents`, `/agents/{id}/run`, `/agents/{id}/dispatch`, `/tasks/{id}`, `/stats/usage`, `/stats/limits` endpoint'leri. | `4ed5c40` + `66dbb16` |
 
-#### Canlı kanıt (12 May 2026)
-- `account_manager` → openrouter/owl-alpha primary, 952 token, 25.3s
-- `social_media` → gemini-2.5-flash (organic fallback), 672 token, 2.7s
-- `crm_billing` → gemini-2.5-flash, 706 token, 2.5s, JSON çıktı doğru
-- `publisher` async dispatch → Celery task SUCCESS, 568 token, 2.3s
-- `/stats/usage`: 4 çağrı, 2330 token, by_status: success=3 fallback=1
-- `/stats/limits`: 20 model takip ediliyor (örn. gemini-2.5-flash %20 RPM)
-- Postgres `agency.usage_logs`: tablo aktif, 5 index
-
 ### ✅ AŞAMA 4 — Obsidian Vault + Drive + Hybrid Bellek
 
 | Parça | Dosya / davranış |
@@ -57,12 +48,27 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 | Bind mount | `docker-compose.yml`: `agency-api` + `agency-worker` → `${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults` |
 | Şablon | `scripts/templates/vault/` (00-Inbox … 99-Arsiv) |
 | Yeni müşteri | `scripts/new-client.ps1 -ClientId "slug"` |
-| SQL | `scripts/sql/init/03-note-embeddings.sql` → tablo `agency.note_embeddings` (**mevcut volume'da init yeniden çalışmaz** — bir kez `psql -f` ile apply) |
+| SQL | `scripts/sql/init/03-note-embeddings.sql` → tablo `agency.note_embeddings` |
 | Watcher | `src/vault/poller.py` asyncio döngüsü; `.md` değişince chunk + `litellm` Gemini embedding |
 | Heartbeat | `<vault>/<client>/.agency-heartbeat.json` |
 | REST | `/vault/status`, `/vault/files`, `/vault/note`, `/vault/search` |
 | Crew (sync) | `src/crew/tools/vault_fs.py` |
-| Doctor | `agency.note_embeddings` varlığı + `/vault/status` |
+
+### ✅ AŞAMA 5 — Langfuse + Guardrails + Token Bütçesi (v0.4.0)
+
+| Parça | Dosya / davranış |
+|---|---|
+| **Langfuse v3 self-hosted** | 6 container (`obs` profili): `langfuse-web` (UI port 3001), `langfuse-worker`, ayrı Postgres/Redis/ClickHouse/MinIO |
+| **Headless init** | `LANGFUSE_INIT_*` env vars → org/proje/key otomatik oluşturma (UI gerekmez) |
+| **LiteLLM callback** | `src/observability/langfuse_integration.py` — `litellm.success_callback` + `failure_callback` ile her LLM çağrısı trace olarak Langfuse'a gönderilir |
+| **Circuit breaker** | `src/guardrails/circuit_breaker.py` — Redis key ile provider bazlı ardışık hata takibi; eşik aşılınca (3 hata) 5dk devre dışı |
+| **Token bütçesi** | `src/guardrails/token_budget.py` — Postgres `agency.token_budgets` tablosu; müşteri bazlı günlük/kampanya limiti; günlük otomatik reset |
+| **Budget middleware** | `src/middleware/token_budget.py` — POST `/agents/*/run\|dispatch` için bütçe kontrolü; bütçe aşılırsa HTTP 429 |
+| **Vault @tool** | `src/crew/tools/vault_tools.py` — CrewAI `@tool` dekoratörü ile 4 tool: `VaultReadNote`, `VaultWriteNote`, `VaultListFiles`, `VaultSemanticSearch` |
+| **Model router** | `src/router/model_router.py` — Langfuse metadata + circuit breaker check + token budget kaydı entegre |
+| **REST** | `/stats/langfuse`, `/stats/budget` endpoint'leri |
+| **SQL** | `scripts/sql/init/04-token-budgets.sql` |
+| **Doctor** | Langfuse container'ları + `token_budgets` tablo + `/stats/langfuse` kontrolleri |
 
 ---
 
@@ -72,10 +78,16 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 |---|---|---|---|---|
 | `adagency-postgres` | 5432 | core | ✅ | 1 |
 | `adagency-redis` | 6379 | core | ✅ | 1 |
-| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2–4 |
-| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2–4 |
+| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2–5 |
+| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2–5 |
+| `adagency-langfuse-web` | **3001** | obs | ✅ | 5 |
+| `adagency-langfuse-worker` | - | obs | ✅ | 5 |
+| `adagency-langfuse-postgres` | - | obs | ✅ | 5 |
+| `adagency-langfuse-redis` | - | obs | ✅ | 5 |
+| `adagency-langfuse-clickhouse` | - | obs | ✅ | 5 |
+| `adagency-langfuse-minio` | - | obs | ✅ | 5 |
 
-Bekleyen: Langfuse (5), Postiz (6), Flowise (8), MCP Gateway (6), CRM (7).
+Bekleyen: Postiz (6), MCP Gateway (6), CRM (7), Flowise (8).
 
 ---
 
@@ -130,6 +142,10 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/vault/files
 curl -s -X POST http://127.0.0.1:8010/vault/search \
   -H "X-Client-Id: akme-tekstil" -H "Content-Type: application/json" \
   -d "{\"query\":\"kampanya\",\"limit\":5}"
+
+# Langfuse + Budget (Asama 5)
+curl http://127.0.0.1:8010/stats/langfuse
+curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 ```
 
 ---
@@ -139,17 +155,19 @@ curl -s -X POST http://127.0.0.1:8010/vault/search \
 - **Ollama**: `host.docker.internal:11434` üzerinden erişiliyor; container içi DNS düzgün ayarlanmış (`extra_hosts`).
 - **Multi-stage Dockerfile**: Şu an single-stage (transitive dep sorunları nedeniyle); optimize edilebilir.
 - **Account Manager geriye dönük endpoint**: `/brief` hâlâ çalışır (Asama 2 demo), `/agents/account_manager/run` ile aynı işi yapar.
-- **Account Manager logs hatası**: PowerShell `return` döngüden çıkamıyor — sadece test scriptinde, ürünü etkilemez.
-- **`logs/`**: Cursor ortamında gitignore; vault/E2E test payload’ları için `logs/` altına yazılan dosyalar repoda olmayabilir.
-- **`note_embeddings`**: Eski Postgres volume kullanıyorsanız `03-note-embeddings.sql` dosyasını container’a kopyalayıp `psql -f` ile bir kez çalıştırın.
+- **`logs/`**: Cursor ortamında gitignore; vault/E2E test payload'ları için `logs/` altına yazılan dosyalar repoda olmayabilir.
+- **`note_embeddings`**: Eski Postgres volume kullanıyorsanız `03-note-embeddings.sql` dosyasını container'a kopyalayıp `psql -f` ile bir kez çalıştırın.
+- **`token_budgets`**: Eski Postgres volume kullanıyorsanız `04-token-budgets.sql` dosyasını container'a kopyalayıp `psql -f` ile bir kez çalıştırın.
+- **Langfuse v3**: 6 ek container gerektirir (CH + MinIO kaynak tüketimi yüksek); dev makinede 4+ core, 16GB+ RAM önerilir.
+- **Langfuse headless init**: İlk başlatmada org/proje/key otomatik oluşturulur; UI'da ek yapılandırma gerekmez.
 
 ---
 
-## 6. Sonraki Adım: AŞAMA 5 — Langfuse + Guardrails
+## 6. Sonraki Adım: AŞAMA 6 — Postiz + MCP Gateway
 
-- Langfuse self-hosted (compose profili `obs`) + FastAPI trace gönderimi
-- Token bütçesi / müşteri bazlı limit middleware (`TOKEN_BUDGET_*`)
-- CrewAI tool çağrılarında Vault (`vault_fs`) resmi `@tool` sarmalayıcıları
+- Postiz self-hosted (sosyal medya paylaşım otoması)
+- MCP Gateway (ajan<->araç köprüsü)
+- CrewAI Flow'larla çok-ajanlı kampanya pipeline'ı
 
 ---
 
@@ -158,5 +176,5 @@ curl -s -X POST http://127.0.0.1:8010/vault/search \
 1. `docs/PROJE-DURUMU.md` + `README.md`
 2. `git log --oneline -8`
 3. `.\scripts\doctor.ps1`
-4. `curl http://127.0.0.1:8010/vault/status`
-5. Berat Bey'den **AŞAMA 5** onayı
+4. `curl http://127.0.0.1:8010/stats/langfuse`
+5. Berat Bey'den **AŞAMA 6** onayı
