@@ -4,7 +4,7 @@
 > OpenRouter free + Google Gemini AI Pro + Ollama hibrit dağılım. Obsidian Vault hafıza,
 > Google Drive senkron, Postiz ile gerçek sosyal medya yayını, CRM/Fatura modülü.
 
-**Durum:** AŞAMA 4 (Vault + Drive + watcher + hybrid arama) TAMAMLANDI | API `v0.3.0` | Sonraki: AŞAMA 5 (Langfuse/guardrails)
+**Durum:** AŞAMA 5 (Langfuse + Guardrails + Token Bütçesi) TAMAMLANDI | API `v0.4.0` | Sonraki: AŞAMA 6 (CrewAI Flow + Postiz + MCP Gateway)
 
 > Detaylı kaldığımız yer ve sonraki adımlar için: [`docs/PROJE-DURUMU.md`](docs/PROJE-DURUMU.md)
 
@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:8010/brief `
 | **3.D** | **Akıllı Router: Redis rate limit + Postgres telemetry + proactive fallback** | **✅** | **`66dbb16`** |
 | **3.E** | **`/agents`, `/run`, `/dispatch`, `/tasks/{id}`, `/stats/*` endpoint'leri** | **✅** | **`4ed5c40` + `66dbb16`** |
 | **4** | **Vault `/vaults` bind mount, poller, `note_embeddings`, hybrid `/vault/search`, `new-client.ps1`** | **✅** | `-` |
-| 5 | Guardrails + Langfuse Observability | ⏳ | - |
+| **5** | **Langfuse v3 self-hosted (6 container) + circuit breaker + token bütçesi + Vault @tool** | **✅** | **`87cfb3a`** |
 | 6 | MCP Gateway + Postiz + Tools | ⏳ | - |
 | 7 | CRM & Fatura Servisi | ⏳ | - |
 | 8 | Flowise UI (webhook tetikleyici) | ⏳ | - |
@@ -63,22 +63,37 @@ curl -X POST http://127.0.0.1:8010/brief `
 |---|---|---|---|---|
 | Postgres 16 + pgvector 0.8.2 | `adagency-postgres` | 5432 | core | ✅ |
 | Redis 7.4.9 | `adagency-redis` | 6379 | core | ✅ |
-| **Agency API** (FastAPI + CrewAI) | `adagency-api` | **8010** | agents | ✅ |
-| **Celery Worker** (4 queue) | `adagency-worker` | - | agents | ✅ |
+| **Agency API** v0.4.0 (FastAPI + CrewAI) | `adagency-api` | **8010** | agents | ✅ |
+| **Celery Worker** (4 queue, 12 task) | `adagency-worker` | - | agents | ✅ |
+| **Langfuse Web** v3.173.0 | `adagency-langfuse-web` | **3001** | obs | ✅ |
+| Langfuse Worker | `adagency-langfuse-worker` | - | obs | ✅ |
+| Langfuse Postgres 17 | `adagency-langfuse-postgres` | - | obs | ✅ |
+| Langfuse Redis 7 | `adagency-langfuse-redis` | - | obs | ✅ |
+| Langfuse ClickHouse | `adagency-langfuse-clickhouse` | - | obs | ✅ |
+| Langfuse MinIO | `adagency-langfuse-minio` | - | obs | ✅ |
+| Ollama (host) | - | 11434 | - | ✅ |
 
-> NOT: Host'ta port 8000 başka bir Windows servisi (`Manager`, PID 6464) tarafından tutulduğu için Agency API host portu **8010** olarak ayarlandı. Container içi hala 8000.
+> NOT: Host'ta port 8000 başka bir Windows servisi tarafından tutulduğu için Agency API host portu **8010**.
+
+### Başlatma
+
+```powershell
+# Core + Agents
+docker compose --profile core --profile agents up -d
+
+# Langfuse (Aşama 5)
+docker compose --profile core --profile agents --profile obs up -d
+```
 
 ### Bekleyen Servisler (sonraki aşamalar)
 
 | Servis | Port | Profil | Aşama |
 |---|---|---|---|
-| Langfuse | 3001 | obs | 5 |
-| MCP Gateway | 8811 | mcp | 6 |
 | Postiz | 5000 | social | 6 |
+| MCP Gateway | 8811 | mcp | 6 |
 | Gotenberg (PDF) | 3010 | ui | 7 |
 | CRM Service | 8001 | ui | 7 |
 | Flowise | 3000 | ui | 8 |
-| Ollama (host) | 11434 | - | aktif |
 
 ## Ana Komutlar
 
@@ -111,17 +126,19 @@ make logs SERVICE=agency-api                  # log filtre
 | GET | `/readyz` | - | Readiness (200/503) |
 | GET | `/version` | - | App version |
 | POST | `/brief` | `X-Client-Id` | Account Manager'a brief gönderir (geriye dönük) |
-| **GET** | **`/agents`** | - | **12 ajan registry + 4-katmanlı zincir listesi** |
-| **POST** | **`/agents/{id}/run`** | `X-Client-Id` | **Bir ajanı senkron çalıştır (LLM bekler)** |
-| **POST** | **`/agents/{id}/dispatch`** | `X-Client-Id` | **Async — Celery'e gönderir, task_id döner** |
-| **GET** | **`/tasks/{task_id}`** | - | **Celery durum sorgusu (PENDING/SUCCESS/FAILURE)** |
-| **GET** | **`/stats/usage?hours=24&client=...`** | - | **Telemetry: total token, by_status/agent/model özet** |
-| **GET** | **`/stats/limits`** | - | **Redis anlık RPM/RPD snapshot (her provider+model)** |
-| **GET** | **`/vault/status`** | - | **Vault mount, watcher, heartbeat listesi (doctor)** |
-| **GET** | **`/vault/files`** | `X-Client-Id` | **Vault içi `.md` listesi** |
-| **GET** | **`/vault/note?path=...`** | `X-Client-Id` | **Markdown oku** |
-| **PUT** | **`/vault/note`** | `X-Client-Id` | **Markdown yaz / güncelle** |
-| **POST** | **`/vault/search`** | `X-Client-Id` | **Hybrid arama (pg_trgm + embedding)** |
+| GET | `/agents` | - | 12 ajan registry + 4-katmanlı zincir listesi |
+| POST | `/agents/{id}/run` | `X-Client-Id` | Bir ajanı senkron çalıştır (LLM bekler) |
+| POST | `/agents/{id}/dispatch` | `X-Client-Id` | Async — Celery'e gönderir, task_id döner |
+| GET | `/tasks/{task_id}` | - | Celery durum sorgusu (PENDING/SUCCESS/FAILURE) |
+| GET | `/stats/usage?hours=24&client=...` | - | Telemetry: total token, by_status/agent/model özet |
+| GET | `/stats/limits` | - | Redis anlık RPM/RPD snapshot (her provider+model) |
+| **GET** | **`/stats/langfuse`** | - | **Langfuse bağlantı durumu (callback aktif mi?)** |
+| **GET** | **`/stats/budget`** | `X-Client-Id` | **Müşteri token bütçesi (günlük/kampanya)** |
+| GET | `/vault/status` | - | Vault mount, watcher, heartbeat listesi |
+| GET | `/vault/files` | `X-Client-Id` | Vault içi `.md` listesi |
+| GET | `/vault/note?path=...` | `X-Client-Id` | Markdown oku |
+| PUT | `/vault/note` | `X-Client-Id` | Markdown yaz / güncelle |
+| POST | `/vault/search` | `X-Client-Id` | Hybrid arama (pg_trgm + embedding) |
 | GET | `/docs` | - | Swagger UI |
 
 ### 12 Ajan (registry)
@@ -158,58 +175,67 @@ make logs SERVICE=agency-api                  # log filtre
 ```
 sesli_asistan/
 ├── .env                          # gerçek secrets (gitignored)
-├── .env.example                  # şablon
+├── .env.example                  # şablon (tüm değişkenler)
 ├── .gitignore / .gitattributes
-├── docker-compose.yml            # 7 profil: core/agents/memory/ui/social/obs/mcp
+├── docker-compose.yml            # profiller: core/agents/obs/social/mcp/ui
 ├── Makefile                      # make up/down/logs/doctor
 ├── README.md                     # bu dosya
 ├── docs/
 │   └── PROJE-DURUMU.md          # detaylı kaldığımız yer rehberi
 ├── scripts/
-│   ├── setup.ps1                # aşamalı sihirbaz (Stage 0-1 dolu)
-│   ├── doctor.ps1               # sağlık kontrolü + vault heartbeat + telemetry
-│   ├── new-client.ps1           # drive'e Vault klasoru (sablondan)
+│   ├── setup.ps1                # aşamalı sihirbaz
+│   ├── doctor.ps1               # sağlık (Langfuse + budget dahil)
+│   ├── new-client.ps1           # drive'e Vault klasoru
 │   ├── e2e-demo-akme.ps1
 │   ├── start.ps1, stop.ps1
 │   ├── backup.ps1               # pg_dumpall + vault zip + redis rdb
-│   ├── templates/vault/         # Obsidian klasor sablonu (00-Inbox ... 99-Arsiv)
+│   ├── templates/vault/         # Obsidian klasor sablonu
 │   └── sql/init/
 │       ├── 01-init-pgvector.sql
 │       ├── 02-usage-logs.sql
-│       └── 03-note-embeddings.sql   # hybrid RAG chunk tablosu
+│       ├── 03-note-embeddings.sql
+│       └── 04-token-budgets.sql  # müşteri token bütçesi
 ├── agency/                       # FastAPI + CrewAI v1.14.x
-│   ├── pyproject.toml           # v0.3.0
+│   ├── pyproject.toml           # v0.4.0
 │   ├── Dockerfile               # Python 3.12-slim single-stage
 │   ├── .dockerignore
 │   └── src/
-│       ├── main.py              # FastAPI app
+│       ├── main.py              # FastAPI app (lifespan + middleware)
+│       ├── __init__.py          # __version__ = "0.4.0"
 │       ├── api/
-│       │   ├── routes.py
+│       │   ├── routes.py        # /agents, /stats/*, /brief
 │       │   └── vault_routes.py  # /vault/*
-│       ├── middleware/          # X-Client-Id zorunlu (stats+agents muaf)
+│       ├── middleware/
+│       │   ├── client_context.py # X-Client-Id zorunlu
+│       │   └── token_budget.py  # token bütçesi kontrolü (HTTP 429)
 │       ├── router/
-│       │   ├── model_router.py  # 4-katmanlı fallback + telemetry + rate limit
+│       │   ├── model_router.py  # 4-katmanlı fallback + Langfuse + CB + budget
 │       │   ├── rate_limiter.py  # Redis rolling window (RPM+RPD)
 │       │   └── telemetry.py     # Postgres async insert + agregasyon
 │       ├── config/              # Pydantic Settings + models.yaml (12 ajan)
+│       ├── observability/
+│       │   └── langfuse_integration.py  # LiteLLM OTEL callback
+│       ├── guardrails/
+│       │   ├── token_budget.py  # Postgres agency.token_budgets
+│       │   └── circuit_breaker.py # Redis hata sayacı
 │       ├── vault/
 │       │   ├── paths.py store.py embedder.py sync_db.py search.py poller.py
 │       ├── crew/
 │       │   ├── builder.py       # generic run_agent(agent_id, ...)
-│       │   ├── tools/vault_fs.py  # senkron Vault helper (ajan/tool hook)
+│       │   ├── tools/
+│       │   │   ├── vault_fs.py  # senkron Vault helper
+│       │   │   └── vault_tools.py # CrewAI @tool sarmalayıcılar
+│       │   ├── flows/           # ⏳ Aşama 6 (CrewAI Flow pipeline)
+│       │   ├── tasks/           # ⏳ Aşama 6 (CrewAI Task tanımları)
 │       │   └── agents/
-│       │       ├── registry.py  # 12 ajan task template + system_prompt builder
+│       │       ├── registry.py  # 12 ajan + system_prompt builder
 │       │       └── account_manager.py  # geriye dönük
 │       └── workers/
 │           ├── celery_app.py    # 4 queue + 12 task auto-route
-│           ├── agent_tasks.py   # 12 ajan için Celery task factory
+│           ├── agent_tasks.py   # 12 ajan Celery task factory
 │           └── account_manager_worker.py  # geriye dönük
 ├── mcp/                          # ⏳ Aşama 6
 ├── data/                         # gitignored - volume mount
-│   ├── postgres/
-│   ├── redis/
-│   ├── staging/
-│   └── outputs/
 └── logs/
     └── test-brief.json          # /brief test payload
 ```

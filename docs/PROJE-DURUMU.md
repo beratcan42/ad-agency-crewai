@@ -1,6 +1,6 @@
 # Proje Durumu — Kaldığımız Yer Rehberi
 
-**Son Güncelleme:** 13 Mayıs 2026, 00:15 (UTC+3)
+**Son Güncelleme:** 13 Mayıs 2026, 00:37 (UTC+3)
 **Aktif Branch:** `main`
 **GitHub:** [`beratcan42/ad-agency-crewai`](https://github.com/beratcan42/ad-agency-crewai) (private)
 **API Sürüm:** `0.4.0`
@@ -60,7 +60,7 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 |---|---|
 | **Langfuse v3 self-hosted** | 6 container (`obs` profili): `langfuse-web` (UI port 3001), `langfuse-worker`, ayrı Postgres/Redis/ClickHouse/MinIO |
 | **Headless init** | `LANGFUSE_INIT_*` env vars → org/proje/key otomatik oluşturma (UI gerekmez) |
-| **LiteLLM callback** | `src/observability/langfuse_integration.py` — `litellm.success_callback` + `failure_callback` ile her LLM çağrısı trace olarak Langfuse'a gönderilir |
+| **LiteLLM callback** | `src/observability/langfuse_integration.py` — `langfuse_otel` OTEL callback ile her LLM çağrısı trace olarak Langfuse'a gönderilir |
 | **Circuit breaker** | `src/guardrails/circuit_breaker.py` — Redis key ile provider bazlı ardışık hata takibi; eşik aşılınca (3 hata) 5dk devre dışı |
 | **Token bütçesi** | `src/guardrails/token_budget.py` — Postgres `agency.token_budgets` tablosu; müşteri bazlı günlük/kampanya limiti; günlük otomatik reset |
 | **Budget middleware** | `src/middleware/token_budget.py` — POST `/agents/*/run\|dispatch` için bütçe kontrolü; bütçe aşılırsa HTTP 429 |
@@ -163,11 +163,28 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 
 ---
 
-## 6. Sonraki Adım: AŞAMA 6 — Postiz + MCP Gateway
+## 6. Sonraki Adım: AŞAMA 6 — CrewAI Flow + Postiz + MCP Gateway
 
-- Postiz self-hosted (sosyal medya paylaşım otoması)
-- MCP Gateway (ajan<->araç köprüsü)
-- CrewAI Flow'larla çok-ajanlı kampanya pipeline'ı
+### 6.A — CrewAI Flow Pipeline (Kampanya Orkestrasyon)
+- `crew/flows/campaign_flow.py` — Brief'ten teslimat'a çok-ajanlı pipeline
+- `crew/tasks/` — Her ajan için CrewAI Task tanımları
+- Pipeline: Account Manager → Customer Service → Strategist → Copywriter → Social Media → SEO → Creative Director → Publisher
+- Vault tool'ları entegre (her ajan brief + çıktıyı vault'a yazar)
+
+### 6.B — Postiz Self-Hosted
+- `docker-compose.yml` social profili: Postiz container
+- Sosyal medya paylaşım otomasyonu (X/IG/TikTok/LinkedIn/FB)
+- Publisher ajanı → Postiz API entegrasyonu
+
+### 6.C — MCP Gateway
+- `mcp/` dizini: ajan↔araç köprüsü
+- Tool server (web search, image gen, vb.)
+- `docker-compose.yml` mcp profili
+
+### 6.D — REST + Doctor
+- `/campaigns/run` endpoint (Flow tetikleme)
+- `/campaigns/{id}` (Flow durum takibi)
+- Doctor: Postiz + MCP kontrolleri
 
 ---
 
