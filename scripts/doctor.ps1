@@ -268,7 +268,7 @@ if ($apiRunning -eq 'healthy') {
                 }
             }
         } else {
-            Write-Status "Vault mount (/vaults)" "WARN" "bos veya erisim yok — compose volume + VAULT_BASE_PATH_HOST"
+            Write-Status "Vault mount (/vaults)" "WARN" "bos veya erisim yok; compose volume + VAULT_BASE_PATH_HOST kontrol et"
         }
     } catch { Write-Status "/vault/status" "FAIL" $_.Exception.Message }
 }
@@ -281,7 +281,7 @@ if ($wkRunning -eq 'healthy') {
     try {
         $reg = docker exec adagency-worker celery -A src.workers.celery_app inspect registered 2>$null | Select-String "src.workers.agent_tasks\." | Measure-Object | Select-Object -ExpandProperty Count
         if ($reg -ge 12) {
-            Write-Status "Celery task registry" "OK" "$reg / 12 ajan task'i aktif"
+            Write-Status "Celery task registry" "OK" ('{0} / 12 ajan taskleri aktif' -f $reg)
         } else {
             Write-Status "Celery task registry" "WARN" "$reg / 12 task (eksik)"
         }
@@ -289,8 +289,9 @@ if ($wkRunning -eq 'healthy') {
 
     try {
         $active = docker exec adagency-worker celery -A src.workers.celery_app inspect active_queues 2>$null | Select-String "name" | Measure-Object | Select-Object -ExpandProperty Count
-        Write-Status "Aktif queue'lar" "OK" "$active queue (q_heavy, q_fast, q_io, q_research)"
-    } catch { Write-Status "Aktif queue'lar" "WARN" "okunamiyor" }
+        $qDetail = ('{0} bagli queue: q_heavy / q_fast / q_io / q_research' -f $active)
+        Write-Status "Aktif kuyruk" "OK" $qDetail
+    } catch { Write-Status "Aktif kuyruk" "WARN" "okunamiyor" }
 }
 
 # --- Redis detay -------------------------------------------------
@@ -301,7 +302,9 @@ if ($rdRunning -eq 'healthy') {
     $envFile = "$root\.env"
     $rdPass = ((Get-Content $envFile | Select-String "^REDIS_PASSWORD=").Line -split '=', 2)[1]
 
-    $rdver = docker exec adagency-redis redis-cli -a $rdPass --no-auth-warning INFO server 2>$null | Select-String "redis_version:" | ForEach-Object { ($_ -split ':')[1].Trim() }
+    $rdver = docker exec adagency-redis redis-cli -a $rdPass --no-auth-warning INFO server 2>$null |
+        Select-String "redis_version:" |
+        ForEach-Object { ($_ -replace '^\s*redis_version:', '').Trim() }
     if ($rdver) { Write-Status "Redis version" "OK" "v$rdver" }
 
     $maxmem = docker exec adagency-redis redis-cli -a $rdPass --no-auth-warning CONFIG GET maxmemory 2>$null | Select-Object -Last 1
