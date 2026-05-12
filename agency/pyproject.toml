@@ -1,6 +1,6 @@
 [project]
 name = "ad-agency"
-version = "0.4.0"
+version = "1.0.0"
 description = "CrewAI Multi-Agent Reklam Ajansi - FastAPI orchestrator"
 requires-python = ">=3.11,<3.13"
 authors = [{ name = "Berat" }]
