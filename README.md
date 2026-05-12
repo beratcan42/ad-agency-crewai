@@ -53,7 +53,7 @@ curl -X POST http://127.0.0.1:8010/brief `
 | **6** | **MCP Gateway + Postiz + CrewAI Flows** | **✅** | **`fd27652`** |
 | **7** | **CRM & Fatura Servisi (Postgres + ReportLab PDF + CrewAI Tools)** | **✅** | **`PENDING`** |
 | **8** | **Flowise UI (docker-compose ui profili + Custom Tool Entegrasyonu)** | **✅** | **`PENDING`** |
-| 9 | Dokümantasyon | ⏳ | - |
+| **9** | **Dokümantasyon (API Reference, Agent Architecture)** | **✅** | **`PENDING`** |
 | 10 | E2E Test (3 senaryo) | ⏳ | - |
 | 11 | Final Review | ⏳ | - |
 
@@ -66,19 +66,11 @@ curl -X POST http://127.0.0.1:8010/brief `
 | **Agency API** (FastAPI + CrewAI) | `adagency-api` | **8010** | agents | ✅ |
 | **Celery Worker** (4 queue) | `adagency-worker` | - | agents | ✅ |
 | **Langfuse Web** | `adagency-langfuse-web` | **3001** | obs | ✅ |
+| **Postiz** | `adagency-postiz` | **5000** | social | ✅ |
+| **MCP Gateway** | `adagency-mcp-gateway` | **8811** | mcp | ✅ |
+| **Flowise UI** | `adagency-flowise` | **3000** | ui | ✅ |
 
-> NOT: Host'ta port 8000 başka bir Windows servisi (`Manager`, PID 6464) tarafından tutulduğu için Agency API host portu **8010** olarak ayarlandı. Container içi hala 8000. Langfuse Web portu ise **3001**.
-
-### Bekleyen Servisler (sonraki aşamalar)
-
-| Servis | Port | Profil | Aşama |
-|---|---|---|---|
-| MCP Gateway | 8811 | mcp | 6 |
-| Postiz | 5000 | social | 6 |
-| Gotenberg (PDF) | 3010 | ui | 7 |
-| CRM Service | 8001 | ui | 7 |
-| Flowise | 3000 | ui | 8 |
-| Ollama (host) | 11434 | - | aktif |
+> NOT: Host'ta port 8000 başka bir Windows servisi (`Manager`, PID 6464) tarafından tutulduğu için Agency API host portu **8010** olarak ayarlandı. Container içi hala 8000. Langfuse Web portu ise **3001**. Flowise **3000**, Postiz **5000** portundadır.
 
 ## Ana Komutlar
 

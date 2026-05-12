@@ -190,11 +190,18 @@ curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/stats/budget
 - **Network:** Flowise'ın Docker iç network üzerinden (`http://adagency-api:8000`) API ile konuşması için gerekli konfigürasyon yapıldı.
 - **Entegrasyon Rehberi:** `docs/flowise_templates/README.md` dosyası oluşturuldu. İçerisinde Custom Tool (JavaScript) ve Webhook tabanlı tetikleyici tanımları yer alıyor.
 
-## 6. Sonraki Adım: AŞAMA 9 — Dokümantasyon
+### ✅ AŞAMA 9 — Dokümantasyon (v0.8.0)
 
-- Sistem mimarisinin, tüm endpoint'lerin ve entegrasyonların son bir kez belgelenmesi
-- Kurulum rehberinin güncellenmesi
-- Ajan prompt şablonlarının markdown formatında bir klasörde toplanması
+- **API Referansı:** `docs/API_REFERENCE.md` oluşturularak tüm endpoint'ler (Brief, CRM, Vault, Stats vb.) belgelendi.
+- **Ajan Mimarisi:** `docs/AGENT_ARCHITECTURE.md` oluşturularak 12 ajanın listesi, araçları ve CrewAI akış prensipleri açıklandı.
+- **README:** Genel proje durumu ve bekleyen/çalışan servisler güncellendi.
+
+## 6. Sonraki Adım: AŞAMA 10 — E2E Test (3 Senaryo)
+
+Sistemin uçtan uca kusursuz çalıştığını doğrulamak için PowerShell veya Python test scriptleri ile şu 3 senaryo işletilecek:
+1. Yeni müşteri oluşturma ve Vault okuma testleri
+2. CrewAI Flows (Kampanya) tetikleme ve Postiz taslağını doğrulama
+3. CRM bütçe kontrolü ve Langfuse'a iz (trace) düştüğünü doğrulama
 
 ---
 
