@@ -1,12 +1,16 @@
-"""Hibrit model router — 4 katmanlı fallback (timeout + 429 + ağ hatası handle).
+"""Hibrit model router — 4 katmanli fallback + Redis rate limit + Postgres telemetry.
 
-Aşama 2'de minimal versiyon. Aşama 3'te Redis rolling window + telemetry eklenecek.
+Asama 3.D:
+  - Redis rolling-window rate limiter (RPM/RPD) ile proactive fallback
+  - Postgres agency.usage_logs tablosuna fire-and-forget insert (her cagri)
+  - Hata tiplerini ayrik isaretle: success | fallback | error | skip_ratelimit
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,16 +19,17 @@ from litellm.exceptions import APIConnectionError, RateLimitError, Timeout
 
 from ..config.loader import get_agent_chain, get_provider_config
 from ..config.settings import settings
+from .rate_limiter import get_rate_limiter
+from .telemetry import log_usage
 
 log = logging.getLogger(__name__)
 
-# LiteLLM globalleri
 litellm.set_verbose = False
 litellm.drop_params = True
 
 
 class AllProvidersFailedError(Exception):
-    """Tüm fallback zincirinin başarısız olduğunu belirtir."""
+    """Tum fallback zincirinin basarisiz oldugunu belirtir."""
 
 
 @dataclass
@@ -37,11 +42,11 @@ class CallResult:
 
 
 class ModelRouter:
-    """Tek bir ajanın çağrılarını yöneten yönlendirici.
+    """Tek bir ajanin cagrilarini yoneten yonlendirici.
 
-    Kullanım:
+    Kullanim:
         router = ModelRouter("account_manager")
-        result = await router.acompletion([{"role":"user","content":"..."}])
+        result = await router.acompletion([{"role":"user","content":"..."}], client_id="acme")
     """
 
     def __init__(self, agent_id: str):
@@ -83,25 +88,56 @@ class ModelRouter:
         *,
         temperature: float = 0.4,
         max_tokens: int | None = None,
+        client_id: str = "unknown",
     ) -> CallResult:
-        """Zincirde sırayla dene, ilk başarılı sonucu döndür."""
-        last_error: Exception | None = None
+        """Zincirde sirayla dene, ilk basarili sonucu dondur.
 
-        for entry in self.chain:
+        Her adimda:
+          1) Rate limiter check (proactive fallback)
+          2) LiteLLM cagri
+          3) Telemetry insert (status: success | fallback | error | skip_ratelimit)
+          4) Basariliysa Redis sayaclari artir
+        """
+        last_error: Exception | None = None
+        rl = await get_rate_limiter()
+
+        for idx, entry in enumerate(self.chain):
             provider = entry["provider"]
             model = entry["model"]
             params = self._build_litellm_params(provider, model)
 
-            if provider != "ollama":
-                if not params.get("api_key"):
-                    log.warning(
-                        "router.skip_no_key",
-                        extra={"agent": self.agent_id, "provider": provider, "model": model},
-                    )
-                    continue
+            if provider != "ollama" and not params.get("api_key"):
+                log.warning(
+                    "router.skip_no_key",
+                    extra={"agent": self.agent_id, "provider": provider, "model": model},
+                )
+                await log_usage(
+                    client_id=client_id, agent_id=self.agent_id, provider=provider, model=model,
+                    chain_idx=idx, status="skip_ratelimit", error_class="MissingApiKey",
+                    error_msg="api_key bos veya tanimsiz",
+                )
+                continue
 
-            import time
+            # 1) Proactive rate limit check
+            prov_cfg = get_provider_config(provider)
+            rpm_limit = int(prov_cfg.get("rpm", 0))
+            rpd_limit = int(prov_cfg.get("daily", 0))
+            allowed, reason, usage_snap = await rl.check_capacity(
+                provider, model, rpm_limit, rpd_limit
+            )
+            if not allowed:
+                log.warning(
+                    "router.skip_ratelimit",
+                    extra={"agent": self.agent_id, "provider": provider, "model": model, "reason": reason, **usage_snap},
+                )
+                await log_usage(
+                    client_id=client_id, agent_id=self.agent_id, provider=provider, model=model,
+                    chain_idx=idx, status="skip_ratelimit", error_class="ProactiveLimit",
+                    error_msg=reason, extra=usage_snap,
+                )
+                continue
 
+            # 2) LiteLLM cagri
             t0 = time.perf_counter()
             try:
                 response = await litellm.acompletion(
@@ -112,7 +148,6 @@ class ModelRouter:
                 )
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 content = response["choices"][0]["message"]["content"]
-                # LiteLLM usage pydantic obje olabilir, JSON-serializable dict'e cevir
                 usage_raw = response.get("usage") or {}
                 if hasattr(usage_raw, "model_dump"):
                     usage = usage_raw.model_dump()
@@ -128,40 +163,67 @@ class ModelRouter:
                                 usage[k] = v.dict()
                     except Exception:
                         usage = {}
+
+                # 3+4) Telemetry + sayac artir
+                await log_usage(
+                    client_id=client_id, agent_id=self.agent_id, provider=provider, model=model,
+                    chain_idx=idx, status="success",
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=usage.get("completion_tokens"),
+                    total_tokens=usage.get("total_tokens"),
+                    latency_ms=latency_ms,
+                )
+                await rl.record_call(provider, model)
+
                 log.info(
                     "router.success",
                     extra={
-                        "agent": self.agent_id,
-                        "provider": provider,
-                        "model": model,
-                        "latency_ms": latency_ms,
+                        "agent": self.agent_id, "provider": provider, "model": model,
+                        "chain_idx": idx, "latency_ms": latency_ms,
                         "tokens": usage.get("total_tokens"),
                     },
                 )
                 return CallResult(
-                    provider=provider,
-                    model=model,
-                    content=content,
-                    usage=usage,
-                    latency_ms=latency_ms,
+                    provider=provider, model=model, content=content,
+                    usage=usage, latency_ms=latency_ms,
                 )
+
             except (RateLimitError, Timeout, APIConnectionError) as e:
+                latency_ms = int((time.perf_counter() - t0) * 1000)
                 log.warning(
                     "router.fallback",
-                    extra={"agent": self.agent_id, "provider": provider, "model": model, "err": str(e)},
+                    extra={"agent": self.agent_id, "provider": provider, "model": model, "err": str(e)[:200]},
+                )
+                await log_usage(
+                    client_id=client_id, agent_id=self.agent_id, provider=provider, model=model,
+                    chain_idx=idx, status="fallback", latency_ms=latency_ms,
+                    error_class=type(e).__name__, error_msg=str(e)[:500],
                 )
                 last_error = e
                 continue
-            except Exception as e:  # diğer hataları da fallback'le (graceful)
+            except Exception as e:
+                latency_ms = int((time.perf_counter() - t0) * 1000)
                 log.error(
                     "router.error",
-                    extra={"agent": self.agent_id, "provider": provider, "model": model, "err": str(e)},
+                    extra={"agent": self.agent_id, "provider": provider, "model": model, "err": str(e)[:200]},
+                )
+                await log_usage(
+                    client_id=client_id, agent_id=self.agent_id, provider=provider, model=model,
+                    chain_idx=idx, status="fallback", latency_ms=latency_ms,
+                    error_class=type(e).__name__, error_msg=str(e)[:500],
                 )
                 last_error = e
                 continue
 
+        # Tum zincir tukendi
+        await log_usage(
+            client_id=client_id, agent_id=self.agent_id,
+            provider="(none)", model="(none)", chain_idx=len(self.chain),
+            status="error", error_class="AllProvidersFailed",
+            error_msg=str(last_error)[:500] if last_error else "no_chain_attempt",
+        )
         raise AllProvidersFailedError(
-            f"Tüm sağlayıcılar başarısız: agent={self.agent_id}, son hata: {last_error}"
+            f"Tum saglayicilar basarisiz: agent={self.agent_id}, son hata: {last_error}"
         )
 
     def get_litellm_model_string(self, idx: int = 0) -> tuple[str, dict[str, Any]]:

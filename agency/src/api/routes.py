@@ -356,3 +356,55 @@ async def task_status(task_id: str) -> TaskStatusResponse:
             task_id=task_id, status=res.status, ready=True, error=str(res.info)
         )
     return TaskStatusResponse(task_id=task_id, status=res.status, ready=res.ready())
+
+
+# --- Asama 3.D: Telemetry & rate-limit endpoint'leri --------------
+
+
+@router.get("/stats/usage", tags=["stats"])
+async def stats_usage(
+    hours: int = 24,
+    client: str | None = None,
+) -> dict[str, Any]:
+    """Postgres agency.usage_logs uzerinden son N saatin kullanim ozeti.
+
+    Query params:
+      - hours: 1..720 (default 24)
+      - client: opsiyonel filtreleme (client_id)
+    X-Client-Id GEREKMEZ (genel sistem metrigi).
+    """
+    from ..router.telemetry import get_usage_summary
+
+    hours = max(1, min(720, int(hours)))
+    return await get_usage_summary(hours=hours, client_id=client)
+
+
+@router.get("/stats/limits", tags=["stats"])
+async def stats_limits() -> dict[str, Any]:
+    """Redis rolling window'lari raporlar: her provider/model icin RPM/RPD durumu."""
+    from ..config.loader import load_models_config
+    from ..router.rate_limiter import get_rate_limiter
+
+    cfg = load_models_config()
+    providers_cfg = cfg.get("providers", {})
+
+    # Tum zincirlerden tekil provider+model setini cikar
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str, int, int]] = []
+    for agent_id, agent_cfg in cfg.get("agents", {}).items():
+        for entry in agent_cfg.get("chain", []):
+            p = entry.get("provider", "")
+            m = entry.get("model", "")
+            if not p or not m or (p, m) in seen:
+                continue
+            seen.add((p, m))
+            pcfg = providers_cfg.get(p, {})
+            pairs.append((p, m, int(pcfg.get("rpm", 0)), int(pcfg.get("daily", 0))))
+
+    rl = await get_rate_limiter()
+    snapshot = await rl.snapshot(pairs)
+    return {
+        "count": len(snapshot),
+        "soft_limits": {"rpm_pct_trigger": 0.85, "rpd_pct_trigger": 0.90},
+        "items": snapshot,
+    }

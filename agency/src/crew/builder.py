@@ -69,6 +69,7 @@ async def run_agent(
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
+        client_id=client_id,
     )
     log.info(
         "crew.agent.done",
