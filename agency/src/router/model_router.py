@@ -51,7 +51,11 @@ class ModelRouter:
             raise ValueError(f"Ajan icin chain bos: {agent_id}")
 
     def _build_litellm_params(self, provider: str, model: str) -> dict[str, str]:
-        """LiteLLM için provider'a göre model adı + endpoint."""
+        """LiteLLM icin provider'a gore model adi + endpoint.
+
+        Native prefix'ler tercih edilir (gemini/, ollama_chat/) cunku
+        OpenAI-compat shim'i bazen tool_calling/streaming'i bozuyor.
+        """
         prov_cfg = get_provider_config(provider)
         params: dict[str, Any] = {}
 
@@ -59,17 +63,16 @@ class ModelRouter:
             params["model"] = f"openrouter/{model}"
             params["api_key"] = settings.OPENROUTER_API_KEY
             params["api_base"] = prov_cfg["base_url"]
-        elif provider == "google":
-            # OpenAI-compat endpoint (Gemini için)
-            params["model"] = f"openai/{model}"
+        elif provider in ("gemini", "google"):
+            # LiteLLM native Gemini provider — kendi endpoint'ini yonetir
+            params["model"] = f"gemini/{model}"
             params["api_key"] = settings.GOOGLE_GEMINI_API_KEY
-            params["api_base"] = prov_cfg["base_url"]
         elif provider == "ollama":
-            params["model"] = f"openai/{model}"  # OpenAI-compat endpoint
-            params["api_key"] = "ollama"  # placeholder
-            params["api_base"] = settings.OLLAMA_URL.rstrip("/") + "/v1"
+            # ollama_chat/ native: streaming + tool_calls native destekli
+            params["model"] = f"ollama_chat/{model}"
+            params["api_base"] = settings.OLLAMA_URL.rstrip("/")
         else:
-            raise ValueError(f"Bilinmeyen sağlayıcı: {provider}")
+            raise ValueError(f"Bilinmeyen saglayici: {provider}")
 
         params["timeout"] = float(prov_cfg.get("timeout", 30))
         return params
@@ -89,10 +92,8 @@ class ModelRouter:
             model = entry["model"]
             params = self._build_litellm_params(provider, model)
 
-            # API key boşsa atla
             if provider != "ollama":
-                key_field = "api_key"
-                if not params.get(key_field):
+                if not params.get("api_key"):
                     log.warning(
                         "router.skip_no_key",
                         extra={"agent": self.agent_id, "provider": provider, "model": model},

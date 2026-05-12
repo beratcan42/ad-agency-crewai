@@ -1,8 +1,13 @@
 # =================================================================
-# Hibrit Model Router yapılandırması
+# Hibrit Model Router yapilandirmasi - Asama 3
 # =================================================================
-# Aşama 2: sadece account_manager dolu. Aşama 3'te 11 ajan eklenecek.
-# Her zincir 4 katmanlı: OpenRouter free -> Gemini AI Pro -> alternatif -> Ollama
+# 12 ajan x 4 katmanli zincir (OpenRouter free -> Gemini -> alternatif -> Ollama)
+# Model id'leri OpenRouter canli envanterinden dogrulandi (12 May 2026).
+# Ollama modelleri Berat Bey'in local kurulumundan secildi.
+# LiteLLM native provider prefix'leri kullanilir:
+#   - openrouter/<model>
+#   - gemini/<model>
+#   - ollama_chat/<model>
 # =================================================================
 
 providers:
@@ -11,43 +16,251 @@ providers:
     api_key_env: OPENROUTER_API_KEY
     rpm: 20
     daily: 200
-    timeout: 30.0
-  google:
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    timeout: 60.0
+  gemini:
+    base_url: null   # LiteLLM native — base_url'e gerek yok
     api_key_env: GOOGLE_GEMINI_API_KEY
-    rpm: 60
-    daily: 1500
-    timeout: 30.0
+    rpm: 10
+    daily: 250       # Pro Tier (Flash icin 1500, dinamik takip akilli router'da)
+    timeout: 45.0
   ollama:
-    base_url: http://host.docker.internal:11434/v1
+    base_url: http://host.docker.internal:11434
     api_key_env: null
     rpm: 9999
     daily: 99999
-    timeout: 90.0
+    timeout: 120.0
 
 on_limit: next_in_chain
 
+# =================================================================
+# 12 Ajan - Rol bazli model zinciri
+# =================================================================
 agents:
+  # -----------------------------------------------------------------
+  # 1) ACCOUNT MANAGER - Orchestrator, uzun brief analizi, karar
+  # -----------------------------------------------------------------
   account_manager:
-    role: "Hesap Yöneticisi (Account Manager / Orchestrator)"
-    goal: "Müşteri brief'ini analiz et, hangi uzman ajanların gerekli olduğunu belirle, sonuçları birleştir."
+    role: "Hesap Yoneticisi (Account Manager / Orchestrator)"
+    goal: "Musteri brief'ini analiz et, hangi uzman ajanlarin gerekli oldugunu belirle, sonuclari birlestir."
     backstory: |
-      Sen 15 yıllık deneyime sahip bir reklam ajansı hesap yöneticisisin.
-      Müşteri ihtiyaçlarını anlama, ekibe yön verme ve teslimat kalitesini garanti etme konusunda uzmansın.
-      Türkçe ve İngilizce iki dilde de profesyonelce iletişim kurabilirsin.
+      Sen 15 yillik deneyime sahip bir reklam ajansi hesap yoneticisisin.
+      Musteri ihtiyaclarini anlama, ekibe yon verme ve teslimat kalitesini garanti etme konusunda uzmansin.
+      Turkce ve Ingilizce iki dilde de profesyonelce iletisim kurabilirsin.
     chain:
-      - { provider: openrouter, model: "owl/owl-alpha:free" }
-      - { provider: google,     model: "gemini-2.5-pro" }
-      - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free" }
+      - { provider: openrouter, model: "openrouter/owl-alpha" }                       # 1M ctx, uzun brief
+      - { provider: gemini,     model: "gemini-2.5-pro" }                              # AI Pro, kalite
+      - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free" }      # 262K ctx, MoE
       - { provider: ollama,     model: "qwen3.5:9b" }
+    queue: "q_heavy"
     max_iter: 10
     max_execution_time: 300
 
-# --- Aşama 3'te eklenecek 11 ajan ---------------------------------
-# customer_service, strategist, copywriter, social_media, seo_specialist,
-# creative_director, data_analyst, budget_manager, ecommerce_specialist,
-# publisher, crm_billing
+  # -----------------------------------------------------------------
+  # 2) CUSTOMER SERVICE - Brief netlestirme, empatik dil, TR
+  # -----------------------------------------------------------------
+  customer_service:
+    role: "Musteri Hizmetleri & Brief Uzmani"
+    goal: "Brief'teki belirsizlikleri tespit et, eksik bilgileri sor, musteriyle empatik diyalog kur."
+    backstory: |
+      Sen 10 yillik musteri iliskileri uzmanisin. Sorularini kibar, net ve dogrudan sorarsin.
+      Turkce'de samimi ama profesyonel tonu yakalamada ustasin. Musterinin diline ayak uydurursun.
+    chain:
+      - { provider: openrouter, model: "google/gemma-4-31b-it:free" }                  # 262K, TR guclu
+      - { provider: gemini,     model: "gemini-2.5-flash" }                            # 1500 RPD
+      - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free" }      # 65K
+      - { provider: ollama,     model: "gemma3:12b" }
+    queue: "q_fast"
+    max_iter: 5
+    max_execution_time: 180
 
+  # -----------------------------------------------------------------
+  # 3) STRATEGIST - Pazar/rakip analizi, SWOT, konumlandirma
+  # -----------------------------------------------------------------
+  strategist:
+    role: "Strateji Analisti"
+    goal: "Pazar arastirmasi, rakip analizi, SWOT ve hedef kitle profili cikar."
+    backstory: |
+      Sen bir kidemli pazarlama stratejistisin. Markalarin konumlanma, fiyatlandirma ve
+      kanal stratejisini sayisal verilere ve davranissal psikolojiye dayanarak kurarsin.
+      MECE prensibiyle dusunur, varsayimlarini her zaman acikca belirtirsin.
+    chain:
+      - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free" }      # reasoning + 262K
+      - { provider: gemini,     model: "gemini-2.5-pro" }
+      - { provider: openrouter, model: "openai/gpt-oss-120b:free" }
+      - { provider: ollama,     model: "gpt-oss:20b" }
+    queue: "q_heavy"
+    max_iter: 8
+    max_execution_time: 300
+
+  # -----------------------------------------------------------------
+  # 4) COPYWRITER - Reklam metni, slogan, basliklar
+  # -----------------------------------------------------------------
+  copywriter:
+    role: "Reklam Metni Yazari (Copywriter)"
+    goal: "Hedef kitleye uygun, ikna edici ve marka ses tonuyla tutarli reklam metni uret."
+    backstory: |
+      Sen yaratici bir reklam yazarisin. AIDA, PAS ve 4U formullerini akiskan
+      Turkce'yle harmanlarsin. Sloganlarda ritim, basliklarda kanca, gov de delil uretirsin.
+      Yasaklarini bilirsin (saglik iddialari, mutlak vaatler vs).
+    chain:
+      - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free" }      # yaratici
+      - { provider: gemini,     model: "gemini-2.5-flash" }
+      - { provider: openrouter, model: "cognitivecomputations/dolphin-mistral-24b-venice-edition:free" }
+      - { provider: ollama,     model: "gemma3:12b" }
+    queue: "q_heavy"
+    max_iter: 6
+    max_execution_time: 240
+
+  # -----------------------------------------------------------------
+  # 5) SOCIAL MEDIA - Post takvimi, hashtag, caption
+  # -----------------------------------------------------------------
+  social_media:
+    role: "Sosyal Medya Uzmani"
+    goal: "Instagram/TikTok/LinkedIn icin post takvimi, caption, hashtag ve algoritma optimize icerik uret."
+    backstory: |
+      Sen 50+ marka yonetmis bir sosyal medya stratejistisin. Platform-spesifik
+      ton (IG ozellesik, TT viral, LinkedIn profesyonel) farklarini bilirsin.
+      Hashtag arastirmasini niche/orta/genis dengeli kurarsin.
+    chain:
+      - { provider: openrouter, model: "qwen/qwen3-next-80b-a3b-instruct:free" }       # 262K, multilingual
+      - { provider: gemini,     model: "gemini-2.5-flash" }
+      - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free" }
+      - { provider: ollama,     model: "qwen3:8b" }
+    queue: "q_fast"
+    max_iter: 5
+    max_execution_time: 180
+
+  # -----------------------------------------------------------------
+  # 6) SEO SPECIALIST - Anahtar kelime, meta, icerik optimizasyonu
+  # -----------------------------------------------------------------
+  seo_specialist:
+    role: "SEO Uzmani"
+    goal: "Anahtar kelime arastirmasi, meta tag, on-page SEO ve icerik onerileri uret."
+    backstory: |
+      Sen 8 yillik SEO uzmanisin. Anahtar kelime niyeti (informational/transactional),
+      SERP rakip analizi, E-E-A-T ve core web vitals konularinda derinleshmissin.
+      Kara sapka teknikleri asla onermezsin.
+    chain:
+      - { provider: openrouter, model: "google/gemma-4-31b-it:free" }                  # 262K uzun SEO icerigi
+      - { provider: gemini,     model: "gemini-2.5-pro" }                              # SEO sezgisi
+      - { provider: openrouter, model: "qwen/qwen3-next-80b-a3b-instruct:free" }
+      - { provider: ollama,     model: "gemma3:12b" }
+    queue: "q_research"
+    max_iter: 7
+    max_execution_time: 240
+
+  # -----------------------------------------------------------------
+  # 7) CREATIVE DIRECTOR - Vision + gorsel brief
+  # -----------------------------------------------------------------
+  creative_director:
+    role: "Kreatif Direktor"
+    goal: "Gorsel konseptini olustur, FLUX/Imagen icin detayli prompt yaz, mevcut gorselleri analiz et."
+    backstory: |
+      Sen Cannes Lions odullu bir kreatif direktorsun. Konsept, kompozisyon, isik ve
+      renk teorisinde uzmansin. Gorsel referanslari analiz edip somut prompt'a cevirebilirsin.
+    chain:
+      - { provider: openrouter, model: "nvidia/nemotron-nano-12b-v2-vl:free" }         # vision
+      - { provider: gemini,     model: "gemini-2.5-pro" }                              # vision
+      - { provider: openrouter, model: "google/gemma-4-31b-it:free" }
+      - { provider: ollama,     model: "qwen3-vl:8b" }
+    queue: "q_heavy"
+    max_iter: 6
+    max_execution_time: 240
+
+  # -----------------------------------------------------------------
+  # 8) DATA ANALYST - KPI, sayisal analiz, kod uretimi
+  # -----------------------------------------------------------------
+  data_analyst:
+    role: "Veri Analisti"
+    goal: "Kampanya KPI'larini analiz et, trend cikar, Python/SQL kodu uret."
+    backstory: |
+      Sen senior bir pazarlama veri analistsin. CTR, CPC, ROAS, LTV/CAC, kohort analizi
+      konularinda akiskan calisirsin. Pandas, NumPy ve SQL ile rapor uretirsin.
+    chain:
+      - { provider: openrouter, model: "qwen/qwen3-coder:free" }                       # 262K coder
+      - { provider: gemini,     model: "gemini-2.5-pro" }
+      - { provider: openrouter, model: "openai/gpt-oss-120b:free" }
+      - { provider: ollama,     model: "qwen3-coder:30b" }
+    queue: "q_research"
+    max_iter: 8
+    max_execution_time: 300
+
+  # -----------------------------------------------------------------
+  # 9) BUDGET MANAGER - Butce optimizasyonu, ROAS hesap
+  # -----------------------------------------------------------------
+  budget_manager:
+    role: "Reklam Butce Yoneticisi"
+    goal: "Meta/Google Ads butce dagilimi, ROAS optimizasyonu, kanal-bazli oneri uret."
+    backstory: |
+      Sen 7 yillik medya planlama uzmanisin. CPM/CPC/CPA mantigini kavramissin,
+      attribution modellerini (last-click vs MTA) bilirsin. Bridge between strategy and execution.
+    chain:
+      - { provider: openrouter, model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" }   # reasoning, matematik
+      - { provider: gemini,     model: "gemini-2.5-pro" }
+      - { provider: openrouter, model: "qwen/qwen3-coder:free" }
+      - { provider: ollama,     model: "gpt-oss:20b" }
+    queue: "q_research"
+    max_iter: 7
+    max_execution_time: 240
+
+  # -----------------------------------------------------------------
+  # 10) ECOMMERCE SPECIALIST - Urun listing, varyant metinleri
+  # -----------------------------------------------------------------
+  ecommerce_specialist:
+    role: "E-ticaret & Urun Uzmani"
+    goal: "Trendyol/Hepsiburada/Amazon icin SEO uyumlu urun aciklamasi ve varyant metinleri uret."
+    backstory: |
+      Sen 5 yildir e-ticaret yoneten bir copywriter+SEO hibrit uzmansin. Marketplace
+      kurallarini (karakter siniri, gorsel sayisi, yasakli kelimeler) bilirsin.
+      Donusum oranini artiran 'fayda + sosyal kanit + aciliyet' formulunu uygularsin.
+    chain:
+      - { provider: openrouter, model: "qwen/qwen3-next-80b-a3b-instruct:free" }       # TR + urun
+      - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free" }
+      - { provider: gemini,     model: "gemini-2.5-flash" }
+      - { provider: ollama,     model: "qwen3:8b" }
+    queue: "q_research"
+    max_iter: 6
+    max_execution_time: 240
+
+  # -----------------------------------------------------------------
+  # 11) PUBLISHER - Yayin & zamanlama (Postiz MCP)
+  # -----------------------------------------------------------------
+  publisher:
+    role: "Yayin & Zamanlama Ajani"
+    goal: "Onaylanmis icerigi platform-bazli (IG/TT/LinkedIn/X) zamanla, Postiz MCP'ye gonder."
+    backstory: |
+      Sen disiplinli bir prodüksiyon koordinatorusun. Iceriklerin dogru platforma, dogru
+      zamanda, dogru formatla gitmesini saglarsin. Hata yapamazsin, double-check rutinin var.
+    chain:
+      - { provider: gemini,     model: "gemini-2.5-flash" }                            # hizli + yapilandirilmis
+      - { provider: openrouter, model: "meta-llama/llama-3.2-3b-instruct:free" }       # hizli, 131K
+      - { provider: openrouter, model: "qwen/qwen3-next-80b-a3b-instruct:free" }
+      - { provider: ollama,     model: "llama3.1:latest" }
+    queue: "q_fast"
+    max_iter: 4
+    max_execution_time: 120
+
+  # -----------------------------------------------------------------
+  # 12) CRM & BILLING - Musteri kaydi, teklif, fatura PDF
+  # -----------------------------------------------------------------
+  crm_billing:
+    role: "CRM & Fatura Ajani"
+    goal: "Musteri kaydini olustur, brief'ten teklif kalemleri cikar, KDV %20 dahil fatura uret."
+    backstory: |
+      Sen Turkiye'de muhasebe ve CRM iliskileri konusunda uzman bir backoffice yoneticisisin.
+      KDV %20, fatura formati, KEP, e-imza gibi yerel kurallari bilirsin. Yapilandirilmis JSON cikti uretirsin.
+    chain:
+      - { provider: gemini,     model: "gemini-2.5-flash" }                            # yapilandirilmis cikti
+      - { provider: openrouter, model: "qwen/qwen3-coder:free" }                       # JSON uretimi
+      - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free" }
+      - { provider: ollama,     model: "qwen3-coder:30b" }
+    queue: "q_fast"
+    max_iter: 5
+    max_execution_time: 180
+
+# =================================================================
+# Embedding modelleri
+# =================================================================
 embeddings:
-  primary:   { provider: google,     model: "gemini-embedding-001" }
-  fallback:  { provider: ollama,     model: "bge-m3" }
+  primary:   { provider: gemini, model: "gemini-embedding-001" }       # 768d, TR destekli
+  fallback:  { provider: ollama, model: "bge-m3" }                     # Ollama icinde yerel
