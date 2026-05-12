@@ -189,6 +189,14 @@ if ($pgRunning -eq 'healthy') {
     } else {
         Write-Status "agency.usage_logs" "WARN" "tablo yok (3.D SQL apply edilmemis)"
     }
+
+    $noteTbl = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='agency' AND tablename='note_embeddings';" 2>$null
+    if ($noteTbl -and ($noteTbl.Trim() -eq '1')) {
+        $embRows = docker exec adagency-postgres psql -U $pgUser -d $pgDb -tAc "SELECT count(*) FROM agency.note_embeddings;" 2>$null
+        Write-Status "agency.note_embeddings" "OK" "tablo var ($($embRows.Trim()) chunk)"
+    } else {
+        Write-Status "agency.note_embeddings" "WARN" "tablo yok (Asama 4: 03-note-embeddings.sql apply)"
+    }
 }
 
 # --- Agency API detay --------------------------------------------
@@ -243,6 +251,26 @@ if ($apiRunning -eq 'healthy') {
             Write-Status "Rate limit havuzu" "OK" "$($l.count) model, hepsi <%50"
         }
     } catch { Write-Status "/stats/limits endpoint" "FAIL" $_.Exception.Message }
+
+    # Asama 4: Vault + watcher
+    try {
+        $vs = Invoke-RestMethod -Uri "http://127.0.0.1:8010/vault/status" -TimeoutSec 6
+        if ($vs.mount_ok) {
+            Write-Status "Vault mount (/vaults)" "OK" "$($vs.clients.Count) musteri klasoru"
+            foreach ($vc in $vs.clients) {
+                $cid = $vc.client_id
+                if ($vc.heartbeat_found -and $null -ne $vc.age_seconds -and [double]$vc.age_seconds -lt 180) {
+                    Write-Status "  heartbeat $cid" "OK" "$([int]$vc.age_seconds)s once"
+                } elseif ($vc.heartbeat_found) {
+                    Write-Status "  heartbeat $cid" "WARN" "$([int]$vc.age_seconds)s (poller/watcher)"
+                } else {
+                    Write-Status "  heartbeat $cid" "WARN" "dosya yok veya parse hatasi"
+                }
+            }
+        } else {
+            Write-Status "Vault mount (/vaults)" "WARN" "bos veya erisim yok — compose volume + VAULT_BASE_PATH_HOST"
+        }
+    } catch { Write-Status "/vault/status" "FAIL" $_.Exception.Message }
 }
 
 # --- Celery worker detay -----------------------------------------

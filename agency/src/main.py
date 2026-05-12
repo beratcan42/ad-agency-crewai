@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import logging.config
 import sys
@@ -33,8 +34,18 @@ log = logging.getLogger("agency")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("agency.startup version=%s env=%s", __version__, settings.ENV)
-    # Aşama 3+ : Redis pool, DB pool, OpenTelemetry start, vault watcher subscribe
+    poller_task: asyncio.Task | None = None
+    if settings.VAULT_WATCHER_ENABLED:
+        from .vault.poller import vault_poller_loop
+
+        poller_task = asyncio.create_task(vault_poller_loop(), name="vault-poller")
     yield
+    if poller_task is not None:
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            pass
     log.info("agency.shutdown")
 
 

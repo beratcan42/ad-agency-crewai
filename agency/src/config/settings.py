@@ -43,7 +43,16 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://host.docker.internal:11434"
     OLLAMA_DEFAULT_MODEL: str = "qwen3.5:9b"
 
+    # Vault (Asama 4): container'da /vaults <- host bind mount
     VAULT_BASE_PATH: str = "/vaults"
+    VAULT_BASE_PATH_HOST: str = ""
+    VAULT_WATCHER_ENABLED: bool = True
+    WATCHER_POLLING_INTERVAL: float = 5.0
+    VAULT_HEARTBEAT_FILENAME: str = ".agency-heartbeat.json"
+    VAULT_CHUNK_CHARS: int = 1200
+    VAULT_CHUNK_OVERLAP: int = 120
+    EMBEDDING_MODEL: str = "gemini/gemini-embedding-001"
+    EMBEDDING_DIM: int = 768
 
     AGENCY_API_HOST: str = "0.0.0.0"
     AGENCY_API_PORT: int = 8000

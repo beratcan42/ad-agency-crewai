@@ -4,7 +4,7 @@
 > OpenRouter free + Google Gemini AI Pro + Ollama hibrit dağılım. Obsidian Vault hafıza,
 > Google Drive senkron, Postiz ile gerçek sosyal medya yayını, CRM/Fatura modülü.
 
-**Durum:** AŞAMA 3 (12 Ajan + Akıllı Router + Telemetry) TAMAMLANDI | 12 ajan canlı, Redis rate limit + Postgres telemetry aktif | AŞAMA 4 (Obsidian + Drive) bekliyor
+**Durum:** AŞAMA 4 (Vault + Drive + watcher + hybrid arama) TAMAMLANDI | API `v0.3.0` | Sonraki: AŞAMA 5 (Langfuse/guardrails)
 
 > Detaylı kaldığımız yer ve sonraki adımlar için: [`docs/PROJE-DURUMU.md`](docs/PROJE-DURUMU.md)
 
@@ -22,8 +22,11 @@ cd c:\YapayZekaa\Cursor\sesli_asistan
 # Saglik kontrolu
 .\scripts\doctor.ps1
 
-# Account Manager canli test
-curl http://127.0.0.1:8010/healthz
+# Yeni musteri vault (Drive senkron yola kopyalar)
+.\scripts\new-client.ps1 -ClientId "akme-tekstil"
+
+# Vault durumu (mount + heartbeat)
+curl http://127.0.0.1:8010/vault/status
 curl -X POST http://127.0.0.1:8010/brief `
   -H "Content-Type: application/json" `
   -H "X-Client-Id: akme-tekstil" `
@@ -45,7 +48,7 @@ curl -X POST http://127.0.0.1:8010/brief `
 | **3.C** | **12 ajan registry + Celery task factory** | **✅** | **`4ed5c40`** |
 | **3.D** | **Akıllı Router: Redis rate limit + Postgres telemetry + proactive fallback** | **✅** | **`66dbb16`** |
 | **3.E** | **`/agents`, `/run`, `/dispatch`, `/tasks/{id}`, `/stats/*` endpoint'leri** | **✅** | **`4ed5c40` + `66dbb16`** |
-| 4 | Obsidian Vault + Drive Sync (staging-first) | ⏳ Bekliyor | - |
+| **4** | **Vault `/vaults` bind mount, poller, `note_embeddings`, hybrid `/vault/search`, `new-client.ps1`** | **✅** | `-` |
 | 5 | Guardrails + Langfuse Observability | ⏳ | - |
 | 6 | MCP Gateway + Postiz + Tools | ⏳ | - |
 | 7 | CRM & Fatura Servisi | ⏳ | - |
@@ -114,6 +117,11 @@ make logs SERVICE=agency-api                  # log filtre
 | **GET** | **`/tasks/{task_id}`** | - | **Celery durum sorgusu (PENDING/SUCCESS/FAILURE)** |
 | **GET** | **`/stats/usage?hours=24&client=...`** | - | **Telemetry: total token, by_status/agent/model özet** |
 | **GET** | **`/stats/limits`** | - | **Redis anlık RPM/RPD snapshot (her provider+model)** |
+| **GET** | **`/vault/status`** | - | **Vault mount, watcher, heartbeat listesi (doctor)** |
+| **GET** | **`/vault/files`** | `X-Client-Id` | **Vault içi `.md` listesi** |
+| **GET** | **`/vault/note?path=...`** | `X-Client-Id` | **Markdown oku** |
+| **PUT** | **`/vault/note`** | `X-Client-Id` | **Markdown yaz / güncelle** |
+| **POST** | **`/vault/search`** | `X-Client-Id` | **Hybrid arama (pg_trgm + embedding)** |
 | GET | `/docs` | - | Swagger UI |
 
 ### 12 Ajan (registry)
@@ -159,27 +167,36 @@ sesli_asistan/
 │   └── PROJE-DURUMU.md          # detaylı kaldığımız yer rehberi
 ├── scripts/
 │   ├── setup.ps1                # aşamalı sihirbaz (Stage 0-1 dolu)
-│   ├── doctor.ps1               # sağlık kontrolü + 12 ajan + telemetry + rate-limit
+│   ├── doctor.ps1               # sağlık kontrolü + vault heartbeat + telemetry
+│   ├── new-client.ps1           # drive'e Vault klasoru (sablondan)
+│   ├── e2e-demo-akme.ps1
 │   ├── start.ps1, stop.ps1
 │   ├── backup.ps1               # pg_dumpall + vault zip + redis rdb
+│   ├── templates/vault/         # Obsidian klasor sablonu (00-Inbox ... 99-Arsiv)
 │   └── sql/init/
-│       ├── 01-init-pgvector.sql # şema + pgvector extension
-│       └── 02-usage-logs.sql    # AŞAMA 3.D telemetry tablosu
-├── agency/                       # ✅ AŞAMA 2-3 dolu
-│   ├── pyproject.toml           # crewai==1.14.3 + litellm + fastapi + celery
+│       ├── 01-init-pgvector.sql
+│       ├── 02-usage-logs.sql
+│       └── 03-note-embeddings.sql   # hybrid RAG chunk tablosu
+├── agency/                       # FastAPI + CrewAI v1.14.x
+│   ├── pyproject.toml           # v0.3.0
 │   ├── Dockerfile               # Python 3.12-slim single-stage
 │   ├── .dockerignore
 │   └── src/
 │       ├── main.py              # FastAPI app
-│       ├── api/routes.py        # /healthz /agents /run /dispatch /tasks /stats
+│       ├── api/
+│       │   ├── routes.py
+│       │   └── vault_routes.py  # /vault/*
 │       ├── middleware/          # X-Client-Id zorunlu (stats+agents muaf)
 │       ├── router/
 │       │   ├── model_router.py  # 4-katmanlı fallback + telemetry + rate limit
 │       │   ├── rate_limiter.py  # Redis rolling window (RPM+RPD)
 │       │   └── telemetry.py     # Postgres async insert + agregasyon
 │       ├── config/              # Pydantic Settings + models.yaml (12 ajan)
+│       ├── vault/
+│       │   ├── paths.py store.py embedder.py sync_db.py search.py poller.py
 │       ├── crew/
 │       │   ├── builder.py       # generic run_agent(agent_id, ...)
+│       │   ├── tools/vault_fs.py  # senkron Vault helper (ajan/tool hook)
 │       │   └── agents/
 │       │       ├── registry.py  # 12 ajan task template + system_prompt builder
 │       │       └── account_manager.py  # geriye dönük

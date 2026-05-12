@@ -107,7 +107,7 @@ services:
     build:
       context: ./agency
       dockerfile: Dockerfile
-    image: adagency/agency-api:0.2.0
+    image: adagency/agency-api:0.3.0
     container_name: adagency-api
     restart: unless-stopped
     profiles: [agents]
@@ -131,6 +131,8 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
+    volumes:
+      - ${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults:rw
     networks:
       - agency_net
     deploy:
@@ -139,7 +141,7 @@ services:
           memory: 2g
 
   agency-worker:
-    image: adagency/agency-api:0.2.0
+    image: adagency/agency-api:0.3.0
     build:
       context: ./agency
       dockerfile: Dockerfile
@@ -158,6 +160,8 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults:rw
     command:
       - sh
       - -c

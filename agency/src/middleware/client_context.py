@@ -1,9 +1,6 @@
 """X-Client-Id middleware — multi-tenant isolasyon için.
 
-Aşağıdaki path'ler X-Client-Id gerektirmez:
-- /healthz, /readyz, /version
-- /docs, /redoc, /openapi.json
-- /admin/* (sadece admin token ile)
+Muaf path ornekleri: /healthz, /docs, /agents, /stats/*, /vault/status.
 """
 
 from __future__ import annotations
@@ -32,10 +29,17 @@ _EXEMPT_PATTERNS = [
     re.compile(r"^/agents/?$"),         # GET /agents — registry listesi (public)
     re.compile(r"^/tasks/[a-f0-9-]+$"), # task_id ile durum sorgusu
     re.compile(r"^/stats/.*"),          # stats endpoint'leri public
+    re.compile(r"^/vault/status/?$"),   # Asama 4: vault mount + heartbeat (doctor)
 ]
 
 # X-Client-Id geçerli format: [a-z0-9_-]{2,64}
 _CLIENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
+
+
+def normalize_client_id(raw: str) -> str | None:
+    """client_id formatını doğrular; geçerliyse küçük harf normalize edilmiş döner."""
+    s = (raw or "").strip().lower()
+    return s if _CLIENT_ID_RE.match(s) else None
 
 
 class ClientContextMiddleware(BaseHTTPMiddleware):

@@ -1,9 +1,10 @@
 # Proje Durumu — Kaldığımız Yer Rehberi
 
-**Son Güncelleme:** 12 Mayıs 2026, 21:10 (UTC+3)
+**Son Güncelleme:** 12 Mayıs 2026, 23:45 (UTC+3)
 **Aktif Branch:** `main`
 **GitHub:** [`beratcan42/ad-agency-crewai`](https://github.com/beratcan42/ad-agency-crewai) (private)
-**Son Commit:** AŞAMA 3 tamamlandı (bkz. commit özetleri aşağıda)
+**API Sürüm:** `0.3.0`
+**Son Commit:** AŞAMA 4 tamamlandı (Vault + watcher + hybrid arama; `git log -1`)
 
 ---
 
@@ -49,6 +50,20 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 - `/stats/limits`: 20 model takip ediliyor (örn. gemini-2.5-flash %20 RPM)
 - Postgres `agency.usage_logs`: tablo aktif, 5 index
 
+### ✅ AŞAMA 4 — Obsidian Vault + Drive + Hybrid Bellek
+
+| Parça | Dosya / davranış |
+|---|---|
+| Bind mount | `docker-compose.yml`: `agency-api` + `agency-worker` → `${VAULT_BASE_PATH_HOST:-./data/staging/vaults}:/vaults` |
+| Şablon | `scripts/templates/vault/` (00-Inbox … 99-Arsiv) |
+| Yeni müşteri | `scripts/new-client.ps1 -ClientId "slug"` |
+| SQL | `scripts/sql/init/03-note-embeddings.sql` → tablo `agency.note_embeddings` (**mevcut volume'da init yeniden çalışmaz** — bir kez `psql -f` ile apply) |
+| Watcher | `src/vault/poller.py` asyncio döngüsü; `.md` değişince chunk + `litellm` Gemini embedding |
+| Heartbeat | `<vault>/<client>/.agency-heartbeat.json` |
+| REST | `/vault/status`, `/vault/files`, `/vault/note`, `/vault/search` |
+| Crew (sync) | `src/crew/tools/vault_fs.py` |
+| Doctor | `agency.note_embeddings` varlığı + `/vault/status` |
+
 ---
 
 ## 2. Çalışan Servisler
@@ -57,8 +72,8 @@ API key'leri canlı doğrulandı: OpenRouter, Google Gemini, HuggingFace.
 |---|---|---|---|---|
 | `adagency-postgres` | 5432 | core | ✅ | 1 |
 | `adagency-redis` | 6379 | core | ✅ | 1 |
-| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2-3 |
-| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2-3 |
+| `adagency-api` (FastAPI + CrewAI) | **8010** | agents | ✅ | 2–4 |
+| `adagency-worker` (Celery, 12 task) | - | agents | ✅ | 2–4 |
 
 Bekleyen: Langfuse (5), Postiz (6), Flowise (8), MCP Gateway (6), CRM (7).
 
@@ -108,6 +123,13 @@ curl http://127.0.0.1:8010/tasks/<task_id>
 # Telemetry
 curl http://127.0.0.1:8010/stats/usage?hours=24
 curl http://127.0.0.1:8010/stats/limits
+
+# Vault (Asama 4)
+curl http://127.0.0.1:8010/vault/status
+curl -H "X-Client-Id: akme-tekstil" http://127.0.0.1:8010/vault/files
+curl -s -X POST http://127.0.0.1:8010/vault/search \
+  -H "X-Client-Id: akme-tekstil" -H "Content-Type: application/json" \
+  -d "{\"query\":\"kampanya\",\"limit\":5}"
 ```
 
 ---
@@ -118,43 +140,23 @@ curl http://127.0.0.1:8010/stats/limits
 - **Multi-stage Dockerfile**: Şu an single-stage (transitive dep sorunları nedeniyle); optimize edilebilir.
 - **Account Manager geriye dönük endpoint**: `/brief` hâlâ çalışır (Asama 2 demo), `/agents/account_manager/run` ile aynı işi yapar.
 - **Account Manager logs hatası**: PowerShell `return` döngüden çıkamıyor — sadece test scriptinde, ürünü etkilemez.
-- **`logs/test-*.json`**: gitignored olmamalı (test scriptleri kullanıyor); şu an logs/ dizini gitignore'da, sorun çıkarsa dosyaları repo'ya alacağız.
+- **`logs/`**: Cursor ortamında gitignore; vault/E2E test payload’ları için `logs/` altına yazılan dosyalar repoda olmayabilir.
+- **`note_embeddings`**: Eski Postgres volume kullanıyorsanız `03-note-embeddings.sql` dosyasını container’a kopyalayıp `psql -f` ile bir kez çalıştırın.
 
 ---
 
-## 6. Sonraki Adım: AŞAMA 4 — Obsidian Vault + Drive Sync
+## 6. Sonraki Adım: AŞAMA 5 — Langfuse + Guardrails
 
-Berat Bey'in onayıyla başlanacak görevler:
-
-### 4.A — Vault iskeleti & MCP entegrasyonu
-- `vaults/<client_id>/` (D:\Google_Drive\AjansKlasoru altında)
-- Obsidian klasör yapısı: `00-Inbox`, `01-Brief`, `02-Strateji`, `03-Copy`, `04-Sosyal`, `05-SEO`, `06-Gorsel`, `07-Veri`, `08-Bütçe`, `09-Yayın`, `99-Arsiv`
-- `new-client.ps1`: yeni müşteri için Vault oluştur (şablondan)
-
-### 4.B — Vault okuma/yazma CrewAI tool'u
-- `agency/src/crew/tools/obsidian_vault.py`: read_note, write_note, list_notes, search_notes
-- Tüm 12 ajan bu tool'u kullanabilir
-
-### 4.C — Embedder & pgvector hybrid search
-- Watcher (watchdog) Vault'ta değişiklik takip eder
-- Yeni/değişen notları embed eder (Gemini → fallback bge-m3) ve `agency.note_embeddings` tablosuna yazar
-- Hybrid search: BM25 (`pg_trgm`) + dense vector (cosine)
-
-### 4.D — Drive senkron sağlığı
-- Vault klasörünün Drive ile sync olduğunu doğrulamak için heartbeat dosyası
-- `doctor.ps1`'a yeni check
-
-### Tahmini efor
-~400 satır kod + ~50 satır SQL + 5-6 endpoint + tool entegrasyonu. 60-90 dakika.
+- Langfuse self-hosted (compose profili `obs`) + FastAPI trace gönderimi
+- Token bütçesi / müşteri bazlı limit middleware (`TOKEN_BUDGET_*`)
+- CrewAI tool çağrılarında Vault (`vault_fs`) resmi `@tool` sarmalayıcıları
 
 ---
 
 ## 7. Bir Sonraki Sohbete Geçerken
 
-Bu dosya kaldığımız yerin tam haritasıdır. Yeni bir sohbet açtığında:
-
-1. Bu dosyayı oku (`docs/PROJE-DURUMU.md`)
-2. `git log --oneline -10` → son commitleri gör
-3. `.\scripts\doctor.ps1` → canlı sistem durumu
-4. `curl http://127.0.0.1:8010/agents` → 12 ajan yaşıyor mu doğrula
-5. Berat Bey'den AŞAMA 4 onayı al, başla
+1. `docs/PROJE-DURUMU.md` + `README.md`
+2. `git log --oneline -8`
+3. `.\scripts\doctor.ps1`
+4. `curl http://127.0.0.1:8010/vault/status`
+5. Berat Bey'den **AŞAMA 5** onayı
